@@ -20,7 +20,7 @@ The component is usable for day-to-day playback and library syncing, but it is s
 
 ## Requirements
 
-- foobar2000 v2.0 or later
+- foobar2000 v2.0 or later (64-bit version only)
 - An OpenSubsonic-compatible server (Latest Navidrome is recommended for best compatibility)
 
 ## Usage
