@@ -145,6 +145,7 @@
     <ClInclude Include="http.h" />
     <ClInclude Include="library.h" />
     <ClInclude Include="metadata.h" />
+    <ClInclude Include="playback.h" />
     <ClInclude Include="resource.h" />
     <ClInclude Include="stdafx.h" />
     <ClInclude Include="types.h" />
