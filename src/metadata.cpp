@@ -13,706 +13,709 @@
 namespace {
 
 enum metadata_field_index : t_uint32 {
-  field_track_id = 0,
-  field_artist,
-  field_title,
-  field_album,
-  field_cover_art_id,
-  field_stream_mime_type,
-  field_suffix,
-  field_duration,
-  field_count,
+	field_track_id = 0,
+	field_artist,
+	field_title,
+	field_album,
+	field_cover_art_id,
+	field_stream_mime_type,
+	field_suffix,
+	field_duration,
+	field_count,
 };
 
 constexpr std::array<const char *, field_count> k_field_names = {
-    "foo_opensubsonic_track_id",     "foo_opensubsonic_artist",
-    "foo_opensubsonic_title",        "foo_opensubsonic_album",
-    "foo_opensubsonic_cover_art_id", "foo_opensubsonic_stream_mime_type",
-    "foo_opensubsonic_suffix",       "foo_opensubsonic_duration"};
+	"foo_opensubsonic_track_id",	 "foo_opensubsonic_artist",
+	"foo_opensubsonic_title",		 "foo_opensubsonic_album",
+	"foo_opensubsonic_cover_art_id", "foo_opensubsonic_stream_mime_type",
+	"foo_opensubsonic_suffix",		 "foo_opensubsonic_duration"};
 
 using track_metadata_map =
-    std::unordered_map<std::string, subsonic::cached_track_metadata>;
+	std::unordered_map<std::string, subsonic::cached_track_metadata>;
 
 std::shared_mutex g_track_metadata_mutex;
 track_metadata_map g_track_metadata;
 
 [[nodiscard]] std::string make_track_key(const char *track_id) {
-  return track_id != nullptr ? std::string(track_id) : std::string();
+	return track_id != nullptr ? std::string(track_id) : std::string();
 }
 
 [[nodiscard]] pfc::string8 make_extra_info_key(const char *raw_key) {
-  std::string key = "foo_opensubsonic_";
-  if (raw_key != nullptr) {
-    const char *cursor = raw_key;
-    while (*cursor != '\0') {
-      const unsigned char ch = static_cast<unsigned char>(*cursor);
-      if (std::isalnum(ch) != 0) {
-        key.push_back(static_cast<char>(std::tolower(ch)));
-      } else {
-        key.push_back('_');
-      }
-      ++cursor;
-    }
-  }
-  return key.c_str();
+	std::string key = "foo_opensubsonic_";
+	if (raw_key != nullptr) {
+		const char *cursor = raw_key;
+		while (*cursor != '\0') {
+			const unsigned char ch = static_cast<unsigned char>(*cursor);
+			if (std::isalnum(ch) != 0) {
+				key.push_back(static_cast<char>(std::tolower(ch)));
+			} else {
+				key.push_back('_');
+			}
+			++cursor;
+		}
+	}
+	return key.c_str();
 }
 
 [[nodiscard]] bool
 try_get_extra_field(const subsonic::cached_track_metadata &entry,
-                    const char *field_name, pfc::string8 &out_value) {
-  out_value.reset();
-  if (field_name == nullptr || *field_name == '\0') {
-    return false;
-  }
+					const char *field_name, pfc::string8 &out_value) {
+	out_value.reset();
+	if (field_name == nullptr || *field_name == '\0') {
+		return false;
+	}
 
-  for (const auto &field : entry.extra_fields) {
-    if (!field.is_valid()) {
-      continue;
-    }
+	for (const auto &field : entry.extra_fields) {
+		if (!field.is_valid()) {
+			continue;
+		}
 
-    if (pfc::stricmp_ascii(field.key, field_name) == 0) {
-      out_value = field.value;
-      return true;
-    }
-  }
+		if (pfc::stricmp_ascii(field.key, field_name) == 0) {
+			out_value = field.value;
+			return true;
+		}
+	}
 
-  return false;
+	return false;
 }
 
 [[nodiscard]] bool
 try_get_first_extra_field(const subsonic::cached_track_metadata &entry,
-                          std::initializer_list<const char *> field_names,
-                          pfc::string8 &out_value) {
-  out_value.reset();
+						  std::initializer_list<const char *> field_names,
+						  pfc::string8 &out_value) {
+	out_value.reset();
 
-  for (const auto *field_name : field_names) {
-    if (try_get_extra_field(entry, field_name, out_value) &&
-        !out_value.is_empty()) {
-      return true;
-    }
-  }
+	for (const auto *field_name : field_names) {
+		if (try_get_extra_field(entry, field_name, out_value) &&
+			!out_value.is_empty()) {
+			return true;
+		}
+	}
 
-  return false;
+	return false;
 }
 
 void try_set_meta_from_extra(file_info_impl &info,
-                             const subsonic::cached_track_metadata &entry,
-                             const char *meta_name, const char *field_name) {
-  pfc::string8 value;
-  if (!info.meta_exists(meta_name) &&
-      try_get_extra_field(entry, field_name, value) && !value.is_empty()) {
-    info.meta_set(meta_name, value);
-  }
+							 const subsonic::cached_track_metadata &entry,
+							 const char *meta_name, const char *field_name) {
+	pfc::string8 value;
+	if (!info.meta_exists(meta_name) &&
+		try_get_extra_field(entry, field_name, value) && !value.is_empty()) {
+		info.meta_set(meta_name, value);
+	}
 }
 
 void try_set_meta_from_extra(file_info_impl &info,
-                             const subsonic::cached_track_metadata &entry,
-                             const char *meta_name,
-                             std::initializer_list<const char *> field_names) {
-  pfc::string8 value;
-  if (!info.meta_exists(meta_name) &&
-      try_get_first_extra_field(entry, field_names, value) &&
-      !value.is_empty()) {
-    info.meta_set(meta_name, value);
-  }
+							 const subsonic::cached_track_metadata &entry,
+							 const char *meta_name,
+							 std::initializer_list<const char *> field_names) {
+	pfc::string8 value;
+	if (!info.meta_exists(meta_name) &&
+		try_get_first_extra_field(entry, field_names, value) &&
+		!value.is_empty()) {
+		info.meta_set(meta_name, value);
+	}
 }
 
 void try_set_info_from_extra(file_info_impl &info,
-                             const subsonic::cached_track_metadata &entry,
-                             const char *info_name,
-                             std::initializer_list<const char *> field_names) {
-  pfc::string8 value;
-  if (try_get_first_extra_field(entry, field_names, value) &&
-      !value.is_empty()) {
-    info.info_set(info_name, value);
-  }
+							 const subsonic::cached_track_metadata &entry,
+							 const char *info_name,
+							 std::initializer_list<const char *> field_names) {
+	pfc::string8 value;
+	if (try_get_first_extra_field(entry, field_names, value) &&
+		!value.is_empty()) {
+		info.info_set(info_name, value);
+	}
 }
 
 [[nodiscard]] pfc::string8
 try_extract_year_from_created(const subsonic::cached_track_metadata &entry) {
-  pfc::string8 created;
-  if (!try_get_first_extra_field(entry, {"created", "createdAt", "date"},
-                                 created) ||
-      created.length() < 4) {
-    return {};
-  }
+	pfc::string8 created;
+	if (!try_get_first_extra_field(entry, {"created", "createdAt", "date"},
+								   created) ||
+		created.length() < 4) {
+		return {};
+	}
 
-  const char *text = created.c_str();
-  if (std::isdigit(static_cast<unsigned char>(text[0])) == 0 ||
-      std::isdigit(static_cast<unsigned char>(text[1])) == 0 ||
-      std::isdigit(static_cast<unsigned char>(text[2])) == 0 ||
-      std::isdigit(static_cast<unsigned char>(text[3])) == 0) {
-    return {};
-  }
+	const char *text = created.c_str();
+	if (std::isdigit(static_cast<unsigned char>(text[0])) == 0 ||
+		std::isdigit(static_cast<unsigned char>(text[1])) == 0 ||
+		std::isdigit(static_cast<unsigned char>(text[2])) == 0 ||
+		std::isdigit(static_cast<unsigned char>(text[3])) == 0) {
+		return {};
+	}
 
-  pfc::string8 year;
-  year.add_string(text, 4);
-  return year;
+	pfc::string8 year;
+	year.add_string(text, 4);
+	return year;
 }
 
 [[nodiscard]] pfc::string8
 guess_codec(const subsonic::cached_track_metadata &entry) {
-  std::string codec;
+	std::string codec;
 
-  if (!entry.suffix.is_empty()) {
-    codec = entry.suffix.c_str();
-  } else if (!entry.stream_mime_type.is_empty()) {
-    codec = entry.stream_mime_type.c_str();
-    const auto semicolon = codec.find(';');
-    if (semicolon != std::string::npos) {
-      codec.erase(semicolon);
-    }
-    const auto slash = codec.rfind('/');
-    if (slash != std::string::npos && slash + 1 < codec.size()) {
-      codec.erase(0, slash + 1);
-    }
-  }
+	if (!entry.suffix.is_empty()) {
+		codec = entry.suffix.c_str();
+	} else if (!entry.stream_mime_type.is_empty()) {
+		codec = entry.stream_mime_type.c_str();
+		const auto semicolon = codec.find(';');
+		if (semicolon != std::string::npos) {
+			codec.erase(semicolon);
+		}
+		const auto slash = codec.rfind('/');
+		if (slash != std::string::npos && slash + 1 < codec.size()) {
+			codec.erase(0, slash + 1);
+		}
+	}
 
-  for (char &c : codec) {
-    c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
-  }
+	for (char &c : codec) {
+		c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+	}
 
-  return codec.c_str();
+	return codec.c_str();
 }
 
 void populate_file_info(const subsonic::cached_track_metadata &entry,
-                        file_info_impl &info) {
-  info = file_info_impl();
+						file_info_impl &info) {
+	info = file_info_impl();
 
-  if (entry.duration_seconds > 0)
-    info.set_length(entry.duration_seconds);
-  if (!entry.artist.is_empty())
-    info.meta_set("artist", entry.artist);
-  if (!entry.title.is_empty())
-    info.meta_set("title", entry.title);
-  if (!entry.album.is_empty())
-    info.meta_set("album", entry.album);
-  if (!entry.track_number.is_empty())
-    info.meta_set("tracknumber", entry.track_number);
-  if (!entry.disc_number.is_empty())
-    info.meta_set("discnumber", entry.disc_number);
-  if (!entry.year.is_empty())
-    info.meta_set("date", entry.year);
-  if (!entry.genre.is_empty())
-    info.meta_set("genre", entry.genre);
+	if (entry.duration_seconds > 0)
+		info.set_length(entry.duration_seconds);
+	if (!entry.artist.is_empty())
+		info.meta_set("artist", entry.artist);
+	if (!entry.title.is_empty())
+		info.meta_set("title", entry.title);
+	if (!entry.album.is_empty())
+		info.meta_set("album", entry.album);
+	if (!entry.track_number.is_empty())
+		info.meta_set("tracknumber", entry.track_number);
+	if (!entry.disc_number.is_empty())
+		info.meta_set("discnumber", entry.disc_number);
+	if (!entry.year.is_empty())
+		info.meta_set("date", entry.year);
+	if (!entry.genre.is_empty())
+		info.meta_set("genre", entry.genre);
 
-  if (!info.meta_exists("date")) {
-    const auto inferred_year = try_extract_year_from_created(entry);
-    if (!inferred_year.is_empty()) {
-      info.meta_set("date", inferred_year);
-    }
-  }
+	if (!info.meta_exists("date")) {
+		const auto inferred_year = try_extract_year_from_created(entry);
+		if (!inferred_year.is_empty()) {
+			info.meta_set("date", inferred_year);
+		}
+	}
 
-  try_set_meta_from_extra(info, entry, "album artist",
-                          {"albumArtist", "albumartist", "displayArtist"});
-  try_set_meta_from_extra(info, entry, "composer",
-                          {"composer", "displayComposer"});
-  try_set_meta_from_extra(info, entry, "lyricist", {"lyricist"});
-  try_set_meta_from_extra(info, entry, "conductor", {"conductor"});
-  try_set_meta_from_extra(info, entry, "performer",
-                          {"performer", "performers"});
-  try_set_meta_from_extra(info, entry, "comment", {"comment"});
-  try_set_meta_from_extra(info, entry, "lyrics", {"lyrics"});
-  try_set_meta_from_extra(info, entry, "publisher", {"publisher", "label"});
-  try_set_meta_from_extra(info, entry, "label", {"label"});
-  try_set_meta_from_extra(info, entry, "copyright", {"copyright"});
-  try_set_meta_from_extra(info, entry, "isrc", {"isrc"});
-  try_set_meta_from_extra(info, entry, "catalognumber",
-                          {"catalogNumber", "catalog_number"});
-  try_set_meta_from_extra(info, entry, "barcode", {"barcode"});
-  try_set_meta_from_extra(info, entry, "asin", {"asin"});
-  try_set_meta_from_extra(info, entry, "language", {"language"});
-  try_set_meta_from_extra(info, entry, "bpm", {"bpm"});
-  try_set_meta_from_extra(info, entry, "grouping", {"grouping", "work"});
-  try_set_meta_from_extra(info, entry, "subtitle", {"subtitle"});
-  try_set_meta_from_extra(info, entry, "discsubtitle",
-                          {"discSubtitle", "discsubtitle"});
-  try_set_meta_from_extra(info, entry, "remixer", {"remixer", "mixArtist"});
-  try_set_meta_from_extra(info, entry, "producer", {"producer"});
-  try_set_meta_from_extra(info, entry, "engineer", {"engineer"});
-  try_set_meta_from_extra(info, entry, "arranger", {"arranger"});
-  try_set_meta_from_extra(info, entry, "compilation",
-                          {"compilation", "isCompilation"});
-  try_set_meta_from_extra(info, entry, "totaltracks",
-                          {"songCount", "trackCount", "totalTracks"});
-  try_set_meta_from_extra(info, entry, "totaldiscs",
-                          {"discCount", "totalDiscs"});
-  try_set_meta_from_extra(info, entry, "musicbrainz_trackid",
-                          {"musicBrainzId", "musicBrainzTrackId"});
-  try_set_meta_from_extra(info, entry, "musicbrainz_albumid",
-                          {"musicBrainzAlbumId", "albumMusicBrainzId"});
-  try_set_meta_from_extra(info, entry, "musicbrainz_artistid",
-                          {"musicBrainzArtistId", "artistMusicBrainzId"});
-  try_set_meta_from_extra(info, entry, "musicbrainz_albumartistid",
-                          {"musicBrainzAlbumArtistId"});
-  try_set_meta_from_extra(info, entry, "original artist", {"originalArtist"});
-  try_set_meta_from_extra(info, entry, "original album", {"originalAlbum"});
-  try_set_meta_from_extra(info, entry, "originaldate",
-                          {"originalDate", "originalYear"});
+	try_set_meta_from_extra(info, entry, "album artist",
+							{"albumArtist", "albumartist", "displayArtist"});
+	try_set_meta_from_extra(info, entry, "composer",
+							{"composer", "displayComposer"});
+	try_set_meta_from_extra(info, entry, "lyricist", {"lyricist"});
+	try_set_meta_from_extra(info, entry, "conductor", {"conductor"});
+	try_set_meta_from_extra(info, entry, "performer",
+							{"performer", "performers"});
+	try_set_meta_from_extra(info, entry, "comment", {"comment"});
+	try_set_meta_from_extra(info, entry, "lyrics", {"lyrics"});
+	try_set_meta_from_extra(info, entry, "publisher", {"publisher", "label"});
+	try_set_meta_from_extra(info, entry, "label", {"label"});
+	try_set_meta_from_extra(info, entry, "copyright", {"copyright"});
+	try_set_meta_from_extra(info, entry, "isrc", {"isrc"});
+	try_set_meta_from_extra(info, entry, "catalognumber",
+							{"catalogNumber", "catalog_number"});
+	try_set_meta_from_extra(info, entry, "barcode", {"barcode"});
+	try_set_meta_from_extra(info, entry, "asin", {"asin"});
+	try_set_meta_from_extra(info, entry, "language", {"language"});
+	try_set_meta_from_extra(info, entry, "bpm", {"bpm"});
+	try_set_meta_from_extra(info, entry, "grouping", {"grouping", "work"});
+	try_set_meta_from_extra(info, entry, "subtitle", {"subtitle"});
+	try_set_meta_from_extra(info, entry, "discsubtitle",
+							{"discSubtitle", "discsubtitle"});
+	try_set_meta_from_extra(info, entry, "remixer", {"remixer", "mixArtist"});
+	try_set_meta_from_extra(info, entry, "producer", {"producer"});
+	try_set_meta_from_extra(info, entry, "engineer", {"engineer"});
+	try_set_meta_from_extra(info, entry, "arranger", {"arranger"});
+	try_set_meta_from_extra(info, entry, "compilation",
+							{"compilation", "isCompilation"});
+	try_set_meta_from_extra(info, entry, "totaltracks",
+							{"songCount", "trackCount", "totalTracks"});
+	try_set_meta_from_extra(info, entry, "totaldiscs",
+							{"discCount", "totalDiscs"});
+	try_set_meta_from_extra(info, entry, "musicbrainz_trackid",
+							{"musicBrainzId", "musicBrainzTrackId"});
+	try_set_meta_from_extra(info, entry, "musicbrainz_albumid",
+							{"musicBrainzAlbumId", "albumMusicBrainzId"});
+	try_set_meta_from_extra(info, entry, "musicbrainz_artistid",
+							{"musicBrainzArtistId", "artistMusicBrainzId"});
+	try_set_meta_from_extra(info, entry, "musicbrainz_albumartistid",
+							{"musicBrainzAlbumArtistId"});
+	try_set_meta_from_extra(info, entry, "original artist", {"originalArtist"});
+	try_set_meta_from_extra(info, entry, "original album", {"originalAlbum"});
+	try_set_meta_from_extra(info, entry, "originaldate",
+							{"originalDate", "originalYear"});
 
-  const auto codec = guess_codec(entry);
-  if (!codec.is_empty()) {
-    info.info_set("codec", codec);
-  }
+	const auto codec = guess_codec(entry);
+	if (!codec.is_empty()) {
+		info.info_set("codec", codec);
+	}
 
-  if (!entry.bitrate.is_empty())
-    info.info_set("bitrate", entry.bitrate);
-  if (!entry.stream_mime_type.is_empty())
-    info.info_set("mime_type", entry.stream_mime_type);
-  if (!entry.cover_art_id.is_empty())
-    info.info_set("subsonic_cover_art_id", entry.cover_art_id);
-  if (!entry.track_id.is_empty())
-    info.info_set("subsonic_track_id", entry.track_id);
+	if (!entry.bitrate.is_empty())
+		info.info_set("bitrate", entry.bitrate);
+	if (!entry.stream_mime_type.is_empty())
+		info.info_set("mime_type", entry.stream_mime_type);
+	if (!entry.cover_art_id.is_empty())
+		info.info_set("subsonic_cover_art_id", entry.cover_art_id);
+	if (!entry.track_id.is_empty())
+		info.info_set("subsonic_track_id", entry.track_id);
 
-  try_set_info_from_extra(info, entry, "encoding",
-                          {"suffix", "transcodedSuffix"});
-  try_set_info_from_extra(info, entry, "samplerate",
-                          {"samplingRate", "sampleRate"});
-  try_set_info_from_extra(info, entry, "channels",
-                          {"channelCount", "channels"});
-  try_set_info_from_extra(info, entry, "bitspersample",
-                          {"bitsPerSample", "bitDepth"});
-  try_set_info_from_extra(info, entry, "filesize", {"size", "contentLength"});
-  try_set_info_from_extra(info, entry, "subsonic_album_id", {"albumId"});
-  try_set_info_from_extra(info, entry, "subsonic_artist_id", {"artistId"});
-  try_set_info_from_extra(info, entry, "subsonic_parent_id", {"parent"});
-  try_set_info_from_extra(info, entry, "subsonic_media_type", {"type"});
-  try_set_info_from_extra(info, entry, "subsonic_created", {"created"});
-  try_set_info_from_extra(info, entry, "subsonic_path", {"path"});
-  try_set_info_from_extra(info, entry, "subsonic_play_count", {"playCount"});
-  try_set_info_from_extra(info, entry, "subsonic_user_rating", {"userRating"});
-  try_set_info_from_extra(info, entry, "subsonic_average_rating",
-                          {"averageRating"});
-  try_set_info_from_extra(info, entry, "subsonic_starred", {"starred"});
-  try_set_info_from_extra(info, entry, "subsonic_is_video", {"isVideo"});
-  try_set_info_from_extra(info, entry, "subsonic_explicit_status",
-                          {"explicitStatus"});
+	try_set_info_from_extra(info, entry, "encoding",
+							{"suffix", "transcodedSuffix"});
+	try_set_info_from_extra(info, entry, "samplerate",
+							{"samplingRate", "sampleRate"});
+	try_set_info_from_extra(info, entry, "channels",
+							{"channelCount", "channels"});
+	try_set_info_from_extra(info, entry, "bitspersample",
+							{"bitsPerSample", "bitDepth"});
+	try_set_info_from_extra(info, entry, "filesize", {"size", "contentLength"});
+	try_set_info_from_extra(info, entry, "subsonic_album_id", {"albumId"});
+	try_set_info_from_extra(info, entry, "subsonic_artist_id", {"artistId"});
+	try_set_info_from_extra(info, entry, "subsonic_parent_id", {"parent"});
+	try_set_info_from_extra(info, entry, "subsonic_media_type", {"type"});
+	try_set_info_from_extra(info, entry, "subsonic_created", {"created"});
+	try_set_info_from_extra(info, entry, "subsonic_path", {"path"});
+	try_set_info_from_extra(info, entry, "subsonic_play_count", {"playCount"});
+	try_set_info_from_extra(info, entry, "subsonic_user_rating",
+							{"userRating"});
+	try_set_info_from_extra(info, entry, "subsonic_average_rating",
+							{"averageRating"});
+	try_set_info_from_extra(info, entry, "subsonic_starred", {"starred"});
+	try_set_info_from_extra(info, entry, "subsonic_is_video", {"isVideo"});
+	try_set_info_from_extra(info, entry, "subsonic_explicit_status",
+							{"explicitStatus"});
 
-  for (const auto &field : entry.extra_fields) {
-    if (!field.is_valid() || field.value.is_empty()) {
-      continue;
-    }
+	for (const auto &field : entry.extra_fields) {
+		if (!field.is_valid() || field.value.is_empty()) {
+			continue;
+		}
 
-    const auto key = make_extra_info_key(field.key);
-    info.info_set(key, field.value);
-  }
+		const auto key = make_extra_info_key(field.key);
+		info.info_set(key, field.value);
+	}
 }
 
 [[nodiscard]] metadb_handle_ptr make_handle_for_track(const char *track_id) {
-  if (track_id == nullptr || *track_id == '\0') {
-    return {};
-  }
+	if (track_id == nullptr || *track_id == '\0') {
+		return {};
+	}
 
-  const pfc::string8 path = subsonic::make_subsonic_path(track_id);
-  return static_api_ptr_t<metadb>()->handle_create(path, 0);
+	const pfc::string8 path = subsonic::make_subsonic_path(track_id);
+	return static_api_ptr_t<metadb>()->handle_create(path, 0);
 }
 
 void dispatch_refresh_for_handles(metadb_handle_list_cref handles) {
-  if (handles.get_count() == 0) {
-    return;
-  }
+	if (handles.get_count() == 0) {
+		return;
+	}
 
-  metadb_handle_list handles_copy = handles;
-  fb2k::inMainThread([handles_copy] {
-    static_api_ptr_t<metadb_io>()->dispatch_refresh(handles_copy);
-  });
+	metadb_handle_list handles_copy = handles;
+	fb2k::inMainThread([handles_copy] {
+		static_api_ptr_t<metadb_io>()->dispatch_refresh(handles_copy);
+	});
 }
 void dispatch_refresh_for_track_ids(
-    const std::vector<subsonic::cached_track_metadata> &entries) {
-  metadb_handle_list handles;
-  handles.remove_all();
+	const std::vector<subsonic::cached_track_metadata> &entries) {
+	metadb_handle_list handles;
+	handles.remove_all();
 
-  for (const auto &entry : entries) {
-    if (!entry.is_valid()) {
-      continue;
-    }
+	for (const auto &entry : entries) {
+		if (!entry.is_valid()) {
+			continue;
+		}
 
-    const auto handle = make_handle_for_track(entry.track_id);
-    if (handle.is_valid()) {
-      handles.add_item(handle);
-    }
-  }
+		const auto handle = make_handle_for_track(entry.track_id);
+		if (handle.is_valid()) {
+			handles.add_item(handle);
+		}
+	}
 
-  handles.sort_by_pointer_remove_duplicates();
-  dispatch_refresh_for_handles(handles);
+	handles.sort_by_pointer_remove_duplicates();
+	dispatch_refresh_for_handles(handles);
 }
 
 void hint_metadata_async(const subsonic::cached_track_metadata &entry) {
-  if (!entry.is_valid()) {
-    return;
-  }
+	if (!entry.is_valid()) {
+		return;
+	}
 
-  const auto handle = make_handle_for_track(entry.track_id);
-  if (!handle.is_valid()) {
-    return;
-  }
+	const auto handle = make_handle_for_track(entry.track_id);
+	if (!handle.is_valid()) {
+		return;
+	}
 
-  file_info_impl info;
-  populate_file_info(entry, info);
+	file_info_impl info;
+	populate_file_info(entry, info);
 
-  t_filestats fake_stats;
-  fake_stats.m_size = filesize_invalid;
-  fake_stats.m_timestamp = 3;
+	t_filestats fake_stats;
+	fake_stats.m_size = filesize_invalid;
+	fake_stats.m_timestamp = 3;
 
-  static_api_ptr_t<metadb_io>()->hint_async(handle, info, fake_stats, true);
+	static_api_ptr_t<metadb_io>()->hint_async(handle, info, fake_stats, true);
 }
 
 void replace_snapshot_locked(
-    const std::vector<subsonic::cached_track_metadata> &entries) {
-  std::unordered_map<std::string, subsonic::cached_track_metadata> next;
-  next.reserve(entries.size());
+	const std::vector<subsonic::cached_track_metadata> &entries) {
+	std::unordered_map<std::string, subsonic::cached_track_metadata> next;
+	next.reserve(entries.size());
 
-  for (const auto &entry : entries) {
-    if (!entry.is_valid()) {
-      continue;
-    }
-    next.insert_or_assign(make_track_key(entry.track_id), entry);
-  }
+	for (const auto &entry : entries) {
+		if (!entry.is_valid()) {
+			continue;
+		}
+		next.insert_or_assign(make_track_key(entry.track_id), entry);
+	}
 
-  std::unique_lock lock(g_track_metadata_mutex);
-  g_track_metadata = std::move(next);
+	std::unique_lock lock(g_track_metadata_mutex);
+	g_track_metadata = std::move(next);
 }
 
 void upsert_snapshot(const subsonic::cached_track_metadata &entry) {
-  if (!entry.is_valid()) {
-    return;
-  }
+	if (!entry.is_valid()) {
+		return;
+	}
 
-  std::unique_lock lock(g_track_metadata_mutex);
-  g_track_metadata.insert_or_assign(make_track_key(entry.track_id), entry);
+	std::unique_lock lock(g_track_metadata_mutex);
+	g_track_metadata.insert_or_assign(make_track_key(entry.track_id), entry);
 }
 
 void remove_snapshot(const char *track_id) {
-  const auto key = make_track_key(track_id);
-  if (key.empty()) {
-    return;
-  }
+	const auto key = make_track_key(track_id);
+	if (key.empty()) {
+		return;
+	}
 
-  std::unique_lock lock(g_track_metadata_mutex);
-  g_track_metadata.erase(key);
+	std::unique_lock lock(g_track_metadata_mutex);
+	g_track_metadata.erase(key);
 }
 
 [[nodiscard]] bool try_get_snapshot(const char *track_id,
-                                    subsonic::cached_track_metadata &out) {
-  out = {};
+									subsonic::cached_track_metadata &out) {
+	out = {};
 
-  const auto key = make_track_key(track_id);
-  if (key.empty()) {
-    return false;
-  }
+	const auto key = make_track_key(track_id);
+	if (key.empty()) {
+		return false;
+	}
 
-  std::shared_lock lock(g_track_metadata_mutex);
-  const auto found = g_track_metadata.find(key);
-  if (found == g_track_metadata.end()) {
-    return false;
-  }
+	std::shared_lock lock(g_track_metadata_mutex);
+	const auto found = g_track_metadata.find(key);
+	if (found == g_track_metadata.end()) {
+		return false;
+	}
 
-  out = found->second;
-  return true;
+	out = found->second;
+	return true;
 }
 
 class metadata_display_field_provider_impl
-    : public metadb_display_field_provider_v2 {
-public:
-  t_uint32 get_field_count() override { return field_count; }
+	: public metadb_display_field_provider_v2 {
+  public:
+	t_uint32 get_field_count() override { return field_count; }
 
-  void get_field_name(t_uint32 index, pfc::string_base &out) override {
-    PFC_ASSERT(index < get_field_count());
-    out = k_field_names[index];
-  }
+	void get_field_name(t_uint32 index, pfc::string_base &out) override {
+		PFC_ASSERT(index < get_field_count());
+		out = k_field_names[index];
+	}
 
-  bool process_field(t_uint32 index, metadb_handle *handle,
-                     titleformat_text_out *out) override {
-    return process_field_v2(index, handle, handle->query_v2_(), out);
-  }
+	bool process_field(t_uint32 index, metadb_handle *handle,
+					   titleformat_text_out *out) override {
+		return process_field_v2(index, handle, handle->query_v2_(), out);
+	}
 
-  bool process_field_v2(t_uint32 index, metadb_handle *handle,
-                        metadb_v2::rec_t const &,
-                        titleformat_text_out *out) override {
-    if (handle == nullptr || out == nullptr || index >= get_field_count()) {
-      return false;
-    }
+	bool process_field_v2(t_uint32 index, metadb_handle *handle,
+						  metadb_v2::rec_t const &,
+						  titleformat_text_out *out) override {
+		if (handle == nullptr || out == nullptr || index >= get_field_count()) {
+			return false;
+		}
 
-    subsonic::cached_track_metadata entry;
-    if (!subsonic::metadata::try_get_track_metadata_for_path(handle->get_path(),
-                                                             entry)) {
-      return false;
-    }
+		subsonic::cached_track_metadata entry;
+		if (!subsonic::metadata::try_get_track_metadata_for_path(
+				handle->get_path(), entry)) {
+			return false;
+		}
 
-    switch (index) {
-    case field_track_id:
-      if (entry.track_id.is_empty()) {
-        return false;
-      }
-      out->write(titleformat_inputtypes::meta, entry.track_id);
-      return true;
-    case field_artist:
-      if (entry.artist.is_empty()) {
-        return false;
-      }
-      out->write(titleformat_inputtypes::meta, entry.artist);
-      return true;
-    case field_title:
-      if (entry.title.is_empty()) {
-        return false;
-      }
-      out->write(titleformat_inputtypes::meta, entry.title);
-      return true;
-    case field_album:
-      if (entry.album.is_empty()) {
-        return false;
-      }
-      out->write(titleformat_inputtypes::meta, entry.album);
-      return true;
-    case field_cover_art_id:
-      if (entry.cover_art_id.is_empty()) {
-        return false;
-      }
-      out->write(titleformat_inputtypes::meta, entry.cover_art_id);
-      return true;
-    case field_stream_mime_type:
-      if (entry.stream_mime_type.is_empty()) {
-        return false;
-      }
-      out->write(titleformat_inputtypes::meta, entry.stream_mime_type);
-      return true;
-    case field_suffix:
-      if (entry.suffix.is_empty()) {
-        return false;
-      }
-      out->write(titleformat_inputtypes::meta, entry.suffix);
-      return true;
-    case field_duration:
-      if (entry.duration_seconds <= 0) {
-        return false;
-      }
-      out->write(titleformat_inputtypes::meta,
-                 pfc::format_time_ex(entry.duration_seconds, 6));
-      return true;
-    default:
-      return false;
-    }
-  }
+		switch (index) {
+		case field_track_id:
+			if (entry.track_id.is_empty()) {
+				return false;
+			}
+			out->write(titleformat_inputtypes::meta, entry.track_id);
+			return true;
+		case field_artist:
+			if (entry.artist.is_empty()) {
+				return false;
+			}
+			out->write(titleformat_inputtypes::meta, entry.artist);
+			return true;
+		case field_title:
+			if (entry.title.is_empty()) {
+				return false;
+			}
+			out->write(titleformat_inputtypes::meta, entry.title);
+			return true;
+		case field_album:
+			if (entry.album.is_empty()) {
+				return false;
+			}
+			out->write(titleformat_inputtypes::meta, entry.album);
+			return true;
+		case field_cover_art_id:
+			if (entry.cover_art_id.is_empty()) {
+				return false;
+			}
+			out->write(titleformat_inputtypes::meta, entry.cover_art_id);
+			return true;
+		case field_stream_mime_type:
+			if (entry.stream_mime_type.is_empty()) {
+				return false;
+			}
+			out->write(titleformat_inputtypes::meta, entry.stream_mime_type);
+			return true;
+		case field_suffix:
+			if (entry.suffix.is_empty()) {
+				return false;
+			}
+			out->write(titleformat_inputtypes::meta, entry.suffix);
+			return true;
+		case field_duration:
+			if (entry.duration_seconds <= 0) {
+				return false;
+			}
+			out->write(titleformat_inputtypes::meta,
+					   pfc::format_time_ex(entry.duration_seconds, 6));
+			return true;
+		default:
+			return false;
+		}
+	}
 };
 
 static service_factory_single_t<metadata_display_field_provider_impl>
-    g_metadata_display_field_provider_impl;
+	g_metadata_display_field_provider_impl;
 
 class metadata_init_stage_callback_impl : public init_stage_callback {
-public:
-  void on_init_stage(t_uint32 stage) override {
-    if (stage != init_stages::after_config_read) {
-      return;
-    }
+  public:
+	void on_init_stage(t_uint32 stage) override {
+		if (stage != init_stages::after_config_read) {
+			return;
+		}
 
-    abort_callback_dummy abort;
-    try {
-      subsonic::metadata::initialize(abort);
-    } catch (const std::exception &e) {
-      subsonic::log_exception("metadata", e);
-    } catch (...) {
-      subsonic::log_error("metadata",
-                          "failed to initialize metadata provider cache");
-    }
-  }
+		abort_callback_dummy abort;
+		try {
+			subsonic::metadata::initialize(abort);
+		} catch (const std::exception &e) {
+			subsonic::log_exception("metadata", e);
+		} catch (...) {
+			subsonic::log_error("metadata",
+								"failed to initialize metadata provider cache");
+		}
+	}
 };
 
 static service_factory_single_t<metadata_init_stage_callback_impl>
-    g_metadata_init_stage_callback_impl;
+	g_metadata_init_stage_callback_impl;
 
 class metadata_initquit_impl : public initquit {
-public:
-  void on_quit() override { subsonic::metadata::shutdown(); }
+  public:
+	void on_quit() override { subsonic::metadata::shutdown(); }
 };
 
 static service_factory_single_t<metadata_initquit_impl>
-    g_metadata_initquit_impl;
+	g_metadata_initquit_impl;
 
 } // namespace
 
 namespace subsonic::metadata {
 
 void initialize(abort_callback &abort) {
-  cache::initialize(abort);
-  const auto entries = cache::load_all_track_metadata();
-  replace_snapshot_locked(entries);
-  dispatch_refresh_for_track_ids(entries);
-  log_info("metadata", "metadata provider initialized from local cache");
+	cache::initialize(abort);
+	const auto entries = cache::load_all_track_metadata();
+	replace_snapshot_locked(entries);
+	dispatch_refresh_for_track_ids(entries);
+	log_info("metadata", "metadata provider initialized from local cache");
 }
 
 void shutdown() {
-  std::unique_lock lock(g_track_metadata_mutex);
-  g_track_metadata.clear();
+	std::unique_lock lock(g_track_metadata_mutex);
+	g_track_metadata.clear();
 }
 
 bool try_get_track_metadata(const char *track_id, cached_track_metadata &out) {
-  return try_get_snapshot(track_id, out);
+	return try_get_snapshot(track_id, out);
 }
 
 bool try_get_track_metadata_for_path(const char *path,
-                                     cached_track_metadata &out) {
-  pfc::string8 track_id;
-  if (!extract_track_id_from_path(path, track_id)) {
-    out = {};
-    return false;
-  }
+									 cached_track_metadata &out) {
+	pfc::string8 track_id;
+	if (!extract_track_id_from_path(path, track_id)) {
+		out = {};
+		return false;
+	}
 
-  return try_get_snapshot(track_id, out);
+	return try_get_snapshot(track_id, out);
 }
 
 bool try_make_file_info_for_path(const char *path, file_info_impl &out) {
-  cached_track_metadata entry;
-  if (!try_get_track_metadata_for_path(path, entry)) {
-    out = file_info_impl();
-    return false;
-  }
+	cached_track_metadata entry;
+	if (!try_get_track_metadata_for_path(path, entry)) {
+		out = file_info_impl();
+		return false;
+	}
 
-  populate_file_info(entry, out);
-  return true;
+	populate_file_info(entry, out);
+	return true;
 }
 
 void publish_track_metadata(const cached_track_metadata &entry) {
-  if (!entry.is_valid()) {
-    throw pfc::exception_invalid_params();
-  }
+	if (!entry.is_valid()) {
+		throw pfc::exception_invalid_params();
+	}
 
-  cache::upsert_track_metadata(entry);
-  upsert_snapshot(entry);
-  hint_metadata_async(entry);
-  refresh_track(entry.track_id);
+	cache::upsert_track_metadata(entry);
+	upsert_snapshot(entry);
+	hint_metadata_async(entry);
+	refresh_track(entry.track_id);
 }
 
 void clear_all(threaded_process_status &status, abort_callback &abort) {
-  std::vector<cached_track_metadata> entries;
-  {
-    std::shared_lock lock(g_track_metadata_mutex);
-    entries.reserve(g_track_metadata.size());
-    for (const auto &item : g_track_metadata) {
-      entries.push_back(item.second);
-    }
-  }
+	std::vector<cached_track_metadata> entries;
+	{
+		std::shared_lock lock(g_track_metadata_mutex);
+		entries.reserve(g_track_metadata.size());
+		for (const auto &item : g_track_metadata) {
+			entries.push_back(item.second);
+		}
+	}
 
-  cache::replace_track_metadata({}, status, abort);
+	cache::replace_track_metadata({}, status, abort);
 
-  replace_snapshot_locked({});
-  dispatch_refresh_for_track_ids(entries);
+	replace_snapshot_locked({});
+	dispatch_refresh_for_track_ids(entries);
 }
 
 void merge_track_metadata(const std::vector<cached_track_metadata> &entries,
-                          threaded_process_status &status,
-                          abort_callback &abort) {
-  std::vector<cached_track_metadata> unique_entries;
-  unique_entries.reserve(entries.size());
-  std::unordered_map<std::string, size_t> seen;
+						  threaded_process_status &status,
+						  abort_callback &abort) {
+	std::vector<cached_track_metadata> unique_entries;
+	unique_entries.reserve(entries.size());
+	std::unordered_map<std::string, size_t> seen;
 
-  for (const auto &entry : entries) {
-    if (!entry.is_valid())
-      continue;
-    const auto key = make_track_key(entry.track_id);
-    if (key.empty())
-      continue;
+	for (const auto &entry : entries) {
+		if (!entry.is_valid())
+			continue;
+		const auto key = make_track_key(entry.track_id);
+		if (key.empty())
+			continue;
 
-    const auto [it, inserted] = seen.emplace(key, unique_entries.size());
-    if (inserted) {
-      unique_entries.push_back(entry);
-    } else {
-      unique_entries[it->second] = entry;
-    }
-  }
+		const auto [it, inserted] = seen.emplace(key, unique_entries.size());
+		if (inserted) {
+			unique_entries.push_back(entry);
+		} else {
+			unique_entries[it->second] = entry;
+		}
+	}
 
-  auto api_v2 = metadb_io_v2::get();
-  auto hint_list = api_v2->create_hint_list();
-  metadb_handle_list handles;
+	auto api_v2 = metadb_io_v2::get();
+	auto hint_list = api_v2->create_hint_list();
+	metadb_handle_list handles;
 
-  for (size_t i = 0; i < unique_entries.size(); ++i) {
-    if (i % 500 == 0) {
-      abort.check();
-      status.set_progress(i, unique_entries.size());
-      status.set_item(PFC_string_formatter() << "Updating playlist cache: " << i
-                                             << " / " << unique_entries.size());
-    }
-    const auto &entry = unique_entries[i];
-    cache::upsert_track_metadata(entry);
-    upsert_snapshot(entry);
+	for (size_t i = 0; i < unique_entries.size(); ++i) {
+		if (i % 500 == 0) {
+			abort.check();
+			status.set_progress(i, unique_entries.size());
+			status.set_item(PFC_string_formatter()
+							<< "Updating playlist cache: " << i << " / "
+							<< unique_entries.size());
+		}
+		const auto &entry = unique_entries[i];
+		cache::upsert_track_metadata(entry);
+		upsert_snapshot(entry);
 
-    const auto handle = make_handle_for_track(entry.track_id);
-    if (handle.is_valid()) {
-      handles.add_item(handle);
+		const auto handle = make_handle_for_track(entry.track_id);
+		if (handle.is_valid()) {
+			handles.add_item(handle);
 
-      file_info_impl info;
-      populate_file_info(entry, info);
-      t_filestats fake_stats;
-      fake_stats.m_size = filesize_invalid;
-      fake_stats.m_timestamp = 3;
-      hint_list->add_hint(handle, info, fake_stats, true);
-    }
-  }
+			file_info_impl info;
+			populate_file_info(entry, info);
+			t_filestats fake_stats;
+			fake_stats.m_size = filesize_invalid;
+			fake_stats.m_timestamp = 3;
+			hint_list->add_hint(handle, info, fake_stats, true);
+		}
+	}
 
-  status.set_item("Injecting metadata into database...");
-  hint_list->on_done();
+	status.set_item("Injecting metadata into database...");
+	hint_list->on_done();
 
-  handles.sort_by_pointer_remove_duplicates();
-  dispatch_refresh_for_handles(handles);
+	handles.sort_by_pointer_remove_duplicates();
+	dispatch_refresh_for_handles(handles);
 }
 
 void replace_track_metadata(const std::vector<cached_track_metadata> &entries,
-                            threaded_process_status &status,
-                            abort_callback &abort) {
-  cache::replace_track_metadata(entries, status, abort);
+							threaded_process_status &status,
+							abort_callback &abort) {
+	cache::replace_track_metadata(entries, status, abort);
 
-  status.set_item("Updating memory snapshot...");
-  replace_snapshot_locked(entries);
+	status.set_item("Updating memory snapshot...");
+	replace_snapshot_locked(entries);
 
-  auto api_v2 = metadb_io_v2::get();
-  auto hint_list = api_v2->create_hint_list();
-  metadb_handle_list handles;
+	auto api_v2 = metadb_io_v2::get();
+	auto hint_list = api_v2->create_hint_list();
+	metadb_handle_list handles;
 
-  for (size_t i = 0; i < entries.size(); ++i) {
-    if (i % 500 == 0) {
-      abort.check();
-      status.set_progress(i, entries.size());
-      status.set_item(PFC_string_formatter() << "Refreshing internal paths: "
-                                             << i << " / " << entries.size());
-    }
-    const auto &entry = entries[i];
-    if (!entry.is_valid())
-      continue;
+	for (size_t i = 0; i < entries.size(); ++i) {
+		if (i % 500 == 0) {
+			abort.check();
+			status.set_progress(i, entries.size());
+			status.set_item(PFC_string_formatter()
+							<< "Refreshing internal paths: " << i << " / "
+							<< entries.size());
+		}
+		const auto &entry = entries[i];
+		if (!entry.is_valid())
+			continue;
 
-    const auto handle = make_handle_for_track(entry.track_id);
-    if (handle.is_valid()) {
-      handles.add_item(handle);
+		const auto handle = make_handle_for_track(entry.track_id);
+		if (handle.is_valid()) {
+			handles.add_item(handle);
 
-      file_info_impl info;
-      populate_file_info(entry, info);
-      t_filestats fake_stats;
-      fake_stats.m_size = filesize_invalid;
-      fake_stats.m_timestamp = 3;
-      hint_list->add_hint(handle, info, fake_stats, true);
-    }
-  }
+			file_info_impl info;
+			populate_file_info(entry, info);
+			t_filestats fake_stats;
+			fake_stats.m_size = filesize_invalid;
+			fake_stats.m_timestamp = 3;
+			hint_list->add_hint(handle, info, fake_stats, true);
+		}
+	}
 
-  status.set_item("Injecting metadata into database...");
-  hint_list->on_done();
+	status.set_item("Injecting metadata into database...");
+	hint_list->on_done();
 
-  status.set_item("Notifying user interface...");
-  handles.sort_by_pointer_remove_duplicates();
-  dispatch_refresh_for_handles(handles);
+	status.set_item("Notifying user interface...");
+	handles.sort_by_pointer_remove_duplicates();
+	dispatch_refresh_for_handles(handles);
 }
 
 void remove_track_metadata(const char *track_id) {
-  cache::remove_track_metadata(track_id);
-  remove_snapshot(track_id);
-  refresh_track(track_id);
+	cache::remove_track_metadata(track_id);
+	remove_snapshot(track_id);
+	refresh_track(track_id);
 }
 
 void refresh_track(const char *track_id) {
-  const auto handle = make_handle_for_track(track_id);
-  if (!handle.is_valid()) {
-    return;
-  }
+	const auto handle = make_handle_for_track(track_id);
+	if (!handle.is_valid()) {
+		return;
+	}
 
-  fb2k::inMainThread(
-      [handle] { static_api_ptr_t<metadb_io>()->dispatch_refresh(handle); });
+	fb2k::inMainThread(
+		[handle] { static_api_ptr_t<metadb_io>()->dispatch_refresh(handle); });
 }
 
 } // namespace subsonic::metadata

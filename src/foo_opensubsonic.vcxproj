@@ -159,6 +159,7 @@
     <ClCompile Include="http.cpp" />
     <ClCompile Include="library.cpp" />
     <ClCompile Include="metadata.cpp" />
+    <ClCompile Include="playback.cpp" />
     <ClCompile Include="preferences.cpp" />
     <ClCompile Include="stdafx.cpp">
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">Create</PrecompiledHeader>
