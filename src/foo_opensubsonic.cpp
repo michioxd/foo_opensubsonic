@@ -1,7 +1,11 @@
 #include "stdafx.h"
 
-DECLARE_COMPONENT_VERSION("foo_opensubsonic", "0.1",
-                          "OpenSubsonic plugin for foobar2000"
-                          "\n");
+#include "component_info.h"
 
-VALIDATE_COMPONENT_FILENAME("foo_opensubsonic.dll");
+DECLARE_COMPONENT_VERSION(OPENSUBSONIC_COMPONENT_NAME,
+                          OPENSUBSONIC_COMPONENT_VERSION,
+                          OPENSUBSONIC_COMPONENT_ABOUT);
+
+VALIDATE_COMPONENT_FILENAME(OPENSUBSONIC_COMPONENT_NAME ".dll");
+
+FOOBAR2000_IMPLEMENT_CFG_VAR_DOWNGRADE;
