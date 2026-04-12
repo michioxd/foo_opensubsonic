@@ -2,7 +2,7 @@
 
 OpenSubsonic/Navidrome client implementation for foobar2000. In heavy development, but already functional for basic music playback.
 
-![preview](https://github.com/user-attachments/assets/bd2713c0-e7ae-4b9f-9287-5de8d0fe3d3b)
+![preview](https://github.com/user-attachments/assets/82a623fa-557c-4138-b191-84ae1ff206d0)
 
 ## Features
 
