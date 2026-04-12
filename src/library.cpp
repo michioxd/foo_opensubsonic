@@ -53,11 +53,6 @@ const GUID guid_mainmenu_sync_all = {
 	0xb76a,
 	0x4df9,
 	{0x95, 0x34, 0x82, 0xec, 0x17, 0xaa, 0xb5, 0x7f}};
-const GUID guid_mainmenu_clear_cache = {
-	0x4c3d8784,
-	0x1fb2,
-	0x4612,
-	{0x89, 0x97, 0x75, 0xfb, 0x40, 0x8b, 0x10, 0xe9}};
 const GUID guid_playlist_property_scope = {
 	0xe7ea2212,
 	0x31c8,
@@ -1048,7 +1043,6 @@ class mainmenu_commands_opensubsonic : public mainmenu_commands {
 		cmd_sync_library = 0,
 		cmd_sync_playlists,
 		cmd_sync_all,
-		cmd_clear_cache,
 		cmd_total,
 	};
 
@@ -1062,8 +1056,6 @@ class mainmenu_commands_opensubsonic : public mainmenu_commands {
 			return guid_mainmenu_sync_playlists;
 		case cmd_sync_all:
 			return guid_mainmenu_sync_all;
-		case cmd_clear_cache:
-			return guid_mainmenu_clear_cache;
 		default:
 			uBugCheck();
 		}
@@ -1079,9 +1071,6 @@ class mainmenu_commands_opensubsonic : public mainmenu_commands {
 			break;
 		case cmd_sync_all:
 			out = "Sync OpenSubsonic Library + Playlists";
-			break;
-		case cmd_clear_cache:
-			out = "Clear OpenSubsonic Cache";
 			break;
 		default:
 			uBugCheck();
@@ -1102,10 +1091,6 @@ class mainmenu_commands_opensubsonic : public mainmenu_commands {
 		case cmd_sync_all:
 			out = "Runs both the OpenSubsonic library sync and playlist sync.";
 			return true;
-		case cmd_clear_cache:
-			out =
-				"Clears cached metadata/artwork and removes managed playlists.";
-			return true;
 		default:
 			return false;
 		}
@@ -1123,9 +1108,6 @@ class mainmenu_commands_opensubsonic : public mainmenu_commands {
 			break;
 		case cmd_sync_all:
 			subsonic::library::sync_all_async();
-			break;
-		case cmd_clear_cache:
-			subsonic::library::clear_cache_async();
 			break;
 		default:
 			uBugCheck();
