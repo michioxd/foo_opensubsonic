@@ -55,6 +55,7 @@ class opensubsonic_preferences_dialog
 	COMMAND_HANDLER_EX(IDC_OS_CLIENT_NAME, EN_CHANGE, OnEditChange)
 	COMMAND_HANDLER_EX(IDC_OS_ALLOW_INSECURE_TLS, BN_CLICKED, OnToggleChange)
 	COMMAND_HANDLER_EX(IDC_OS_SYNC_NOW, BN_CLICKED, OnSyncNowClicked)
+	COMMAND_HANDLER_EX(IDC_OS_CACHE_ARTWORK, BN_CLICKED, OnCacheArtworkClicked)
 	COMMAND_HANDLER_EX(IDC_OS_CLEAR_CACHE, BN_CLICKED, OnClearCacheClicked)
 	END_MSG_MAP()
 
@@ -76,6 +77,13 @@ class opensubsonic_preferences_dialog
 			apply();
 		}
 		subsonic::library::sync_all_async();
+	}
+
+	void OnCacheArtworkClicked(UINT, int, CWindow) {
+		if (has_changed()) {
+			apply();
+		}
+		subsonic::library::cache_artwork_async();
 	}
 
 	void OnClearCacheClicked(UINT, int, CWindow) {

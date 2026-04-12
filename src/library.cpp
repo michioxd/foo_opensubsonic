@@ -1,5 +1,6 @@
 #include "stdafx.h"
 
+#include "artwork.h"
 #include "library.h"
 
 #include "cache.h"
@@ -658,6 +659,37 @@ try_get_playlist_manager_v2(const service_ptr_t<playlist_manager> &api) {
 	return SIZE_MAX;
 }
 
+[[nodiscard]] t_size find_library_playlist_index(playlist_manager &api,
+												 playlist_manager_v2 *api_v2) {
+	const auto scoped_index =
+		find_playlist_by_scope(api, api_v2, k_library_scope);
+	if (scoped_index != SIZE_MAX) {
+		return scoped_index;
+	}
+
+	return api.find_playlist(k_library_playlist_name);
+}
+
+[[nodiscard]] metadb_handle_list load_library_playlist_items() {
+	auto playlist_api = playlist_manager::get();
+	auto playlist_api_v2 = try_get_playlist_manager_v2(playlist_api);
+	const auto playlist_index =
+		find_library_playlist_index(*playlist_api, playlist_api_v2.get_ptr());
+	if (playlist_index == SIZE_MAX) {
+		throw std::runtime_error("OpenSubsonic Library playlist not found. "
+								 "Please sync the library first.");
+	}
+
+	metadb_handle_list items;
+	playlist_api->playlist_get_all_items(playlist_index, items);
+	if (items.get_count() == 0) {
+		throw std::runtime_error("OpenSubsonic Library playlist is empty. "
+								 "Please sync the library first.");
+	}
+
+	return items;
+}
+
 [[nodiscard]] pfc::string8
 make_unique_playlist_name(playlist_manager &api, const char *desired_name,
 						  t_size self_index = SIZE_MAX) {
@@ -1009,6 +1041,58 @@ class clear_cache_process_callback : public threaded_process_callback {
 	pfc::string8 m_error_msg;
 };
 
+class cache_artwork_process_callback : public threaded_process_callback {
+  public:
+	explicit cache_artwork_process_callback(metadb_handle_list items)
+		: m_items(std::move(items)) {}
+
+	void on_init(HWND p_wnd) override {}
+
+	void run(threaded_process_status &p_status,
+			 abort_callback &p_abort) override {
+		p_status.set_title("Caching OpenSubsonic Artwork");
+		try {
+			subsonic::config::ensure_cache_layout(p_abort);
+			m_result = subsonic::artwork::prefetch_for_library_items(
+				m_items, p_status, p_abort);
+		} catch (const exception_aborted &) {
+			m_aborted = true;
+		} catch (const std::exception &e) {
+			m_error_msg = e.what();
+		}
+	}
+
+	void on_done(HWND p_wnd, bool p_was_aborted) override {
+		g_sync_in_progress = false;
+		if (p_was_aborted || m_aborted)
+			return;
+
+		if (!m_error_msg.is_empty()) {
+			popup_message::g_show(PFC_string_formatter()
+									  << "Cache artwork failed:\n"
+									  << m_error_msg,
+								  "foo_opensubsonic");
+			return;
+		}
+
+		popup_message::g_show(
+			PFC_string_formatter()
+				<< "Artwork cache complete:\n"
+				<< "- Tracks scanned: " << m_result.track_count << "\n"
+				<< "- Unique artworks: " << m_result.unique_artwork_count
+				<< "\n"
+				<< "- Downloaded: " << m_result.downloaded_count << "\n"
+				<< "- Already cached: " << m_result.already_cached_count,
+			"foo_opensubsonic");
+	}
+
+  private:
+	metadb_handle_list m_items;
+	subsonic::artwork::prefetch_artwork_result m_result;
+	bool m_aborted = false;
+	pfc::string8 m_error_msg;
+};
+
 void launch_sync(sync_mode mode) {
 	if (g_sync_in_progress.exchange(true)) {
 		popup_message::g_show("An OpenSubsonic sync is already running.",
@@ -1035,6 +1119,31 @@ void launch_clear_cache() {
 			threaded_process::flag_show_abort |
 			threaded_process::flag_show_item,
 		core_api::get_main_window(), "OpenSubsonic Status");
+}
+
+void launch_cache_artwork() {
+	if (g_sync_in_progress.exchange(true)) {
+		popup_message::g_show("An OpenSubsonic job is already running.",
+							  "foo_opensubsonic");
+		return;
+	}
+
+	try {
+		auto items = load_library_playlist_items();
+		threaded_process::g_run_modeless(
+			new service_impl_t<cache_artwork_process_callback>(
+				std::move(items)),
+			threaded_process::flag_show_progress |
+				threaded_process::flag_show_abort |
+				threaded_process::flag_show_item,
+			core_api::get_main_window(), "OpenSubsonic Status");
+	} catch (const std::exception &e) {
+		g_sync_in_progress = false;
+		popup_message::g_show(PFC_string_formatter()
+								  << "Cache artwork failed:\n"
+								  << e.what(),
+							  "foo_opensubsonic");
+	}
 }
 
 class mainmenu_commands_opensubsonic : public mainmenu_commands {
@@ -1130,6 +1239,8 @@ void sync_library_async() { launch_sync(sync_mode::library_only); }
 void sync_playlists_async() { launch_sync(sync_mode::playlists_only); }
 
 void sync_all_async() { launch_sync(sync_mode::all); }
+
+void cache_artwork_async() { launch_cache_artwork(); }
 
 void clear_cache_async() { launch_clear_cache(); }
 
