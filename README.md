@@ -11,8 +11,6 @@ OpenSubsonic/Navidrome client implementation for foobar2000. In heavy developmen
 - Sync remote library metadata into a local foobar2000 playlist
 - Import and sync remote playlists
 - Load and cache album artwork with fallback support for streamed items
-- Preferences page for server URL, username, password, client name, and insecure TLS toggle
-- Manual actions for sync and cache clearing
 
 ## Current status
 
