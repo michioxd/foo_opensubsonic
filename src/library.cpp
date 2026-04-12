@@ -1041,6 +1041,63 @@ class clear_cache_process_callback : public threaded_process_callback {
 	pfc::string8 m_error_msg;
 };
 
+class clear_artwork_cache_process_callback : public threaded_process_callback {
+  public:
+	void on_init(HWND p_wnd) override {}
+
+	void run(threaded_process_status &p_status,
+			 abort_callback &p_abort) override {
+		p_status.set_title("Clearing OpenSubsonic Artwork Cache");
+		try {
+			auto entries = subsonic::cache::load_all_artwork_entries();
+			for (size_t i = 0; i < entries.size(); ++i) {
+				if (i % 100 == 0) {
+					p_abort.check();
+					p_status.set_progress(i, entries.size());
+					p_status.set_item(PFC_string_formatter()
+									  << "Removing cached artwork: " << i
+									  << " / " << entries.size());
+				}
+
+				if (entries[i].cover_art_id.is_empty()) {
+					continue;
+				}
+
+				subsonic::cache::remove_artwork_entry(entries[i].cover_art_id);
+			}
+
+			p_status.set_progress(entries.size(), entries.size());
+			p_status.set_item("Artwork cache cleared.");
+		} catch (const exception_aborted &) {
+			m_aborted = true;
+		} catch (const std::exception &e) {
+			m_error_msg = e.what();
+		}
+	}
+
+	void on_done(HWND p_wnd, bool p_was_aborted) override {
+		g_sync_in_progress = false;
+		if (p_was_aborted || m_aborted)
+			return;
+
+		if (!m_error_msg.is_empty()) {
+			popup_message::g_show(PFC_string_formatter()
+									  << "Clear artwork cache failed:\n"
+									  << m_error_msg,
+								  "foo_opensubsonic");
+			return;
+		}
+
+		popup_message::g_show(
+			"OpenSubsonic artwork cache cleared successfully.",
+			"foo_opensubsonic");
+	}
+
+  private:
+	bool m_aborted = false;
+	pfc::string8 m_error_msg;
+};
+
 class cache_artwork_process_callback : public threaded_process_callback {
   public:
 	explicit cache_artwork_process_callback(metadb_handle_list items)
@@ -1146,6 +1203,21 @@ void launch_cache_artwork() {
 	}
 }
 
+void launch_clear_artwork_cache() {
+	if (g_sync_in_progress.exchange(true)) {
+		popup_message::g_show("An OpenSubsonic job is already running.",
+							  "foo_opensubsonic");
+		return;
+	}
+
+	threaded_process::g_run_modeless(
+		new service_impl_t<clear_artwork_cache_process_callback>(),
+		threaded_process::flag_show_progress |
+			threaded_process::flag_show_abort |
+			threaded_process::flag_show_item,
+		core_api::get_main_window(), "OpenSubsonic Status");
+}
+
 class mainmenu_commands_opensubsonic : public mainmenu_commands {
   public:
 	enum : t_uint32 {
@@ -1241,6 +1313,8 @@ void sync_playlists_async() { launch_sync(sync_mode::playlists_only); }
 void sync_all_async() { launch_sync(sync_mode::all); }
 
 void cache_artwork_async() { launch_cache_artwork(); }
+
+void clear_artwork_cache_async() { launch_clear_artwork_cache(); }
 
 void clear_cache_async() { launch_clear_cache(); }
 

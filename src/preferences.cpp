@@ -56,6 +56,8 @@ class opensubsonic_preferences_dialog
 	COMMAND_HANDLER_EX(IDC_OS_ALLOW_INSECURE_TLS, BN_CLICKED, OnToggleChange)
 	COMMAND_HANDLER_EX(IDC_OS_SYNC_NOW, BN_CLICKED, OnSyncNowClicked)
 	COMMAND_HANDLER_EX(IDC_OS_CACHE_ARTWORK, BN_CLICKED, OnCacheArtworkClicked)
+	COMMAND_HANDLER_EX(IDC_OS_CLEAR_ARTWORK_CACHE, BN_CLICKED,
+					   OnClearArtworkCacheClicked)
 	COMMAND_HANDLER_EX(IDC_OS_CLEAR_CACHE, BN_CLICKED, OnClearCacheClicked)
 	END_MSG_MAP()
 
@@ -84,6 +86,19 @@ class opensubsonic_preferences_dialog
 			apply();
 		}
 		subsonic::library::cache_artwork_async();
+	}
+
+	void OnClearArtworkCacheClicked(UINT, int, CWindow) {
+		const auto answer = ::MessageBoxA(
+			m_hWnd,
+			"This will remove only cached artwork files. Metadata and "
+			"playlists will remain. Continue?",
+			"foo_opensubsonic", MB_ICONWARNING | MB_YESNO | MB_DEFBUTTON2);
+		if (answer != IDYES) {
+			return;
+		}
+
+		subsonic::library::clear_artwork_cache_async();
 	}
 
 	void OnClearCacheClicked(UINT, int, CWindow) {
