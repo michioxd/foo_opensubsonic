@@ -23,6 +23,7 @@ static const GUID guid_subsonic_album_art_extractor = {
 	{0xa0, 0xd4, 0x66, 0x6c, 0x94, 0x39, 0x5d, 0xa1}};
 
 constexpr size_t k_max_artwork_bytes = 32 * 1024 * 1024;
+constexpr std::uint64_t k_cache_touch_interval_ms = 5ull * 60ull * 1000ull;
 
 enum class ensure_artwork_cached_result {
 	unavailable,
@@ -117,6 +118,31 @@ bool try_read_artwork_file(const char *path, album_art_data_ptr &out_data,
 	return out_data.is_valid();
 }
 
+[[nodiscard]] bool
+try_use_cached_artwork(subsonic::artwork_cache_entry &cached_entry,
+					   pfc::string8 &out_path, pfc::string8 &out_mime_type,
+					   abort_callback &abort) {
+	out_path.reset();
+	out_mime_type.reset();
+
+	if (cached_entry.local_path.is_empty() ||
+		!filesystem::g_exists(cached_entry.local_path, abort)) {
+		return false;
+	}
+
+	const auto now = current_unix_time_ms();
+	if (cached_entry.last_access_unix_ms == 0 ||
+		now < cached_entry.last_access_unix_ms ||
+		now - cached_entry.last_access_unix_ms >= k_cache_touch_interval_ms) {
+		cached_entry.last_access_unix_ms = now;
+		subsonic::cache::upsert_artwork_entry(cached_entry);
+	}
+
+	out_path = cached_entry.local_path;
+	out_mime_type = cached_entry.mime_type;
+	return true;
+}
+
 ensure_artwork_cached_result
 ensure_artwork_cached(const subsonic::cached_track_metadata &track_meta,
 					  pfc::string8 &out_path, pfc::string8 &out_mime_type,
@@ -131,12 +157,8 @@ ensure_artwork_cached(const subsonic::cached_track_metadata &track_meta,
 	subsonic::artwork_cache_entry cached_entry;
 	if (subsonic::cache::try_get_artwork_entry(track_meta.cover_art_id,
 											   cached_entry)) {
-		if (!cached_entry.local_path.is_empty() &&
-			filesystem::g_exists(cached_entry.local_path, abort)) {
-			cached_entry.last_access_unix_ms = current_unix_time_ms();
-			subsonic::cache::upsert_artwork_entry(cached_entry);
-			out_path = cached_entry.local_path;
-			out_mime_type = cached_entry.mime_type;
+		if (try_use_cached_artwork(cached_entry, out_path, out_mime_type,
+								   abort)) {
 			return ensure_artwork_cached_result::already_cached;
 		}
 
