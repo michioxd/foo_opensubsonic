@@ -18,16 +18,17 @@ The component is usable for day-to-day playback and library syncing, but it is s
 
 ## Requirements
 
-- foobar2000 v2.0 or later
+- foobar2000 v2.0 or later (currently x86 and x64 are supported, ARM64 soon™)
 - An OpenSubsonic-compatible server (Latest Navidrome is recommended for best compatibility)
 
 ## Usage
 
-1. Install the component in foobar2000.
-2. Open `Preferences` -> `Tools` -> `OpenSubsonic`.
-3. Enter your server URL, username, and password.
-4. Click `Sync now` to fetch library data and remote playlists.
-5. Play tracks from the generated playlists inside foobar2000.
+1. Download the latest `.zip` release from the [Releases page](https://github.com/michioxd/foo_opensubsonic/releases). Make sure to choose the correct version for your foobar2000 installation (x86 or x64).
+2. After downloading, do not unzip the file. Open foobar2000, go to `Preferences` -> `Components`, and click `Install`. Select the downloaded `.zip` file to install the component directly from the archive.
+3. Open `Preferences` -> `Tools` -> `OpenSubsonic`.
+4. Enter your server URL, username, and password.
+5. Click `Sync now` to fetch library data and remote playlists.
+6. Play tracks from the generated playlists inside foobar2000.
 
 ## Development
 
