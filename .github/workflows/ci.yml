@@ -87,12 +87,25 @@ jobs:
           & $vsInstaller modify `
             --installPath "$installPath" `
             --add Microsoft.VisualStudio.Component.VC.ATL `
+            --add Microsoft.VisualStudio.Component.VC.ATLMFC `
             --add Microsoft.VisualStudio.Component.VC.ATL.ARM64 `
+            --add Microsoft.VisualStudio.Component.VC.MFC.ARM64 `
+            --add Microsoft.VisualStudio.Component.VC.14.29.16.11.ATL `
+            --add Microsoft.VisualStudio.Component.VC.14.29.16.11.MFC `
+            --add Microsoft.VisualStudio.Component.VC.14.29.16.11.ATL.ARM64 `
+            --add Microsoft.VisualStudio.Component.VC.14.29.16.11.MFC.ARM64 `
             --quiet --norestart --wait
 
           if ($LASTEXITCODE -ne 0) {
             throw "Visual Studio component installation failed with exit code $LASTEXITCODE"
           }
+
+          $atlHeaders = Get-ChildItem -Path (Join-Path $installPath "VC\Tools\MSVC") -Filter atlbase.h -Recurse -ErrorAction SilentlyContinue
+          if (-not $atlHeaders) {
+            throw "ATL headers are still missing after component installation"
+          }
+
+          $atlHeaders | Select-Object -ExpandProperty FullName
 
       - name: Setup devcmd
         uses: ilammy/msvc-dev-cmd@v1
