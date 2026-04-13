@@ -23,8 +23,8 @@ The component is usable for day-to-day playback and library syncing, but it is s
 
 ## Usage
 
-1. Download the latest `.zip` release from the [Releases page](https://github.com/michioxd/foo_opensubsonic/releases). Make sure to choose the correct version for your foobar2000 installation (x86 or x64).
-2. After downloading, do not unzip the file. Open foobar2000, go to `Preferences` -> `Components`, and click `Install`. Select the downloaded `.zip` file to install the component directly from the archive.
+1. Download the latest [`foo_opensubsonic.fb2k-component`](https://github.com/michioxd/foo_opensubsonic/releases/download/latest/foo_opensubsonic.fb2k-component) from the [Releases page](https://github.com/michioxd/foo_opensubsonic/releases).
+2. Double click the downloaded file to install it. Or open foobar2000, go to `Preferences` -> `Components`, and click `Install`. Select the downloaded `foo_opensubsonic.fb2k-component` file to install the component directly from the archive.
 3. Open `Preferences` -> `Tools` -> `OpenSubsonic`.
 4. Enter your server URL, username, and password.
 5. Click `Sync now` to fetch library data and remote playlists.
