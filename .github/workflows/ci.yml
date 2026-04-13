@@ -45,7 +45,7 @@ jobs:
         run: |
           $map = @{
             "lib\foobar2000_sdk\libPPUI\libPPUI.vcxproj" = "../..;..;..\..\wtl\Include"
-            "lib\foobar2000_sdk\foobar2000\helpers\foobar2000_sdk_helpers.vcxproj" = "..\..\..\wtl\Include"
+            "lib\foobar2000_sdk\foobar2000\helpers\foobar2000_sdk_helpers.vcxproj" = "..;..\..;..\..\..\wtl\Include"
           }
 
           foreach ($f in $map.Keys) {
