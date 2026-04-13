@@ -33,12 +33,12 @@ jobs:
       - name: Patch SDK
         run: |
           (Get-Content "lib\foobar2000_sdk\foobar2000\helpers\foobar2000_sdk_helpers.vcxproj") `
-            | ForEach-Object { $_ -replace '\.\.\\packages\\wtl', '..\..\..\..\packages\wtl' } `
+            | ForEach-Object { $_ -replace '\.\.\\packages\\wtl', '..\..\..\..\wtl' } `
             | Set-Content "lib\foobar2000_sdk\foobar2000\helpers\foobar2000_sdk_helpers.vcxproj"
 
       - name: Download WTL and nlohmann/json
         run: |
-          git clone https://git.code.sf.net/p/wtl/git lib\WTL
+          git clone https://git.code.sf.net/p/wtl/git lib\wtl
           
           New-Item -ItemType Directory -Force -Path "lib\nlohmann"
           (New-Object System.Net.WebClient).DownloadFile("https://github.com/nlohmann/json/releases/download/v3.12.0/json.hpp", "lib\nlohmann\json.hpp")
