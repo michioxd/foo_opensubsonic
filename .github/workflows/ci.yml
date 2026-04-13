@@ -17,9 +17,9 @@ jobs:
       FBSDK_VERSION: 2025-03-07
 
       SOL_FILE: foo_opensubsonic.sln
-      MSBUILD_CMD_X86: /maxcpucount /property:RestorePackagesConfig=true,Configuration=Release,Platform=Win32,UseOfAtl=Static /target:restore,build
-      MSBUILD_CMD_X64: /maxcpucount /property:RestorePackagesConfig=true,Configuration=Release,Platform=x64,UseOfAtl=Static /target:restore,build
-      MSBUILD_CMD_ARM64EC: /maxcpucount /property:RestorePackagesConfig=true,Configuration=Release,Platform=ARM64EC,UseOfAtl=Static /target:restore,build
+      MSBUILD_CMD_X86: /maxcpucount /p:RestorePackagesConfig=true /p:Configuration=Release /p:Platform=Win32 /t:restore,build
+      MSBUILD_CMD_X64: /maxcpucount /p:RestorePackagesConfig=true /p:Configuration=Release /p:Platform=x64 /t:restore,build
+      MSBUILD_CMD_ARM64EC: /maxcpucount /p:RestorePackagesConfig=true /p:Configuration=Release /p:Platform=ARM64EC /t:restore,build
 
     steps:
       - name: Checkout repository
@@ -40,27 +40,22 @@ jobs:
 
           dir lib
 
-      - name: Patch SDK
+      - name: Inject Global MSBuild Properties (ATL & WTL)
         shell: pwsh
         run: |
-          $map = @{
-            "lib\foobar2000_sdk\libPPUI\libPPUI.vcxproj" = "../..;..;..\..\wtl\Include;%(AdditionalIncludeDirectories)"
-            "lib\foobar2000_sdk\foobar2000\helpers\foobar2000_sdk_helpers.vcxproj" = "..;..\..;..\..\..\wtl\Include;%(AdditionalIncludeDirectories)"
-          }
-
-          foreach ($f in $map.Keys) {
-            $filePath = Resolve-Path $f 
-
-            [xml]$x = Get-Content $filePath
-            $ns = New-Object System.Xml.XmlNamespaceManager($x.NameTable)
-            $ns.AddNamespace("msb", "http://schemas.microsoft.com/developer/msbuild/2003")
-            
-            $x.SelectNodes("//msb:ClCompile/msb:AdditionalIncludeDirectories", $ns) | ForEach-Object { 
-                $_.InnerText = $map[$f] 
-            }
-            
-            $x.Save($filePath)
-          }
+          $props = @'
+          <Project>
+            <PropertyGroup>
+              <UseOfAtl>Static</UseOfAtl>
+            </PropertyGroup>
+            <ItemDefinitionGroup>
+              <ClCompile>
+                <AdditionalIncludeDirectories>$(MSBuildThisFileDirectory)lib\wtl\Include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+              </ClCompile>
+            </ItemDefinitionGroup>
+          </Project>
+          '@
+          Set-Content -Path "Directory.Build.props" -Value $props -Encoding utf8
 
       - name: Setup devcmd
         uses: ilammy/msvc-dev-cmd@v1
