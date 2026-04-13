@@ -43,19 +43,19 @@ jobs:
       - name: Inject Global MSBuild Properties (ATL & WTL)
         shell: pwsh
         run: |
-          $props = @'
+          $targets = @'
           <Project>
             <PropertyGroup>
               <UseOfAtl>Static</UseOfAtl>
             </PropertyGroup>
             <ItemDefinitionGroup>
               <ClCompile>
-                <AdditionalIncludeDirectories>$(MSBuildThisFileDirectory)lib\wtl\Include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+                <AdditionalIncludeDirectories>$(MSBuildThisFileDirectory)lib\wtl\Include;$(VC_ATLMFC_IncludePath);%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
               </ClCompile>
             </ItemDefinitionGroup>
           </Project>
           '@
-          Set-Content -Path "Directory.Build.props" -Value $props -Encoding utf8
+          Set-Content -Path "Directory.Build.targets" -Value $targets -Encoding utf8
 
       - name: Setup devcmd
         uses: ilammy/msvc-dev-cmd@v1
