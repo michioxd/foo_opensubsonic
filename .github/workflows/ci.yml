@@ -44,8 +44,8 @@ jobs:
         shell: pwsh
         run: |
           $projectPatches = @{
-            "lib\foobar2000_sdk\libPPUI\libPPUI.vcxproj" = "../..;..;..\..\wtl\Include;%(AdditionalIncludeDirectories)"
-            "lib\foobar2000_sdk\foobar2000\helpers\foobar2000_sdk_helpers.vcxproj" = "..;..\..;..\..\..\wtl\Include;%(AdditionalIncludeDirectories)"
+            "lib\foobar2000_sdk\libPPUI\libPPUI.vcxproj" = '..;../..;..;..\..\wtl\Include;$(VC_AtlmfcIncludePath);%(AdditionalIncludeDirectories)'
+            "lib\foobar2000_sdk\foobar2000\helpers\foobar2000_sdk_helpers.vcxproj" = '..;..\..;..\..\..\wtl\Include;$(VC_AtlmfcIncludePath);%(AdditionalIncludeDirectories)'
           }
 
           foreach ($project in $projectPatches.GetEnumerator()) {
