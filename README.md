@@ -1,6 +1,6 @@
 # foo_opensubsonic
 
-OpenSubsonic/Navidrome client implementation for foobar2000. In heavy development, but already functional for basic music playback.
+[OpenSubsonic](https://github.com/opensubsonic/open-subsonic-api)/[Navidrome](https://github.com/navidrome/navidrome/) client implementation for [foobar2000](https://www.foobar2000.org/). In heavy development, but already functional for basic music playback.
 
 ![preview](https://github.com/user-attachments/assets/427b8525-2ee1-4c15-8710-ba7f8a715ab2)
 
