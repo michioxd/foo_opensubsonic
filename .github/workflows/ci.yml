@@ -38,7 +38,7 @@ jobs:
 
       - name: Download WTL and nlohmann/json
         run: |
-          (New-Object System.Net.WebClient).DownloadFile("https://downloads.sourceforge.net/project/wtl/WTL%2010.0/WTL%2010.0.10320/WTL10_10320.zip", "${{ runner.temp }}\wtl.zip")
+          (New-Object System.Net.WebClient).DownloadFile("https://downloads.sourceforge.net/project/wtl/WTL%2010/WTL%2010.01%20Release/WTL10_01_Release.zip", "${{ runner.temp }}\wtl.zip")
           7z x "${{ runner.temp }}\wtl.zip" -o"lib\WTL" > nul
           
           New-Item -ItemType Directory -Force -Path "lib\nlohmann"
