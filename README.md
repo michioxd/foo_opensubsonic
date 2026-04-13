@@ -18,17 +18,19 @@ The component is usable for day-to-day playback and library syncing, but it is s
 
 ## Requirements
 
-- foobar2000 v2.0 or later (currently x86 and x64 are supported, ARM64 soon™)
+- foobar2000 v2.0 or later (Windows x86,x64,ARM64. macOS soon...)
 - An OpenSubsonic-compatible server (Latest Navidrome is recommended for best compatibility)
 
 ## Usage
 
-1. Download the latest [`foo_opensubsonic.fb2k-component`](https://github.com/michioxd/foo_opensubsonic/releases/download/latest/foo_opensubsonic.fb2k-component) from the [Releases page](https://github.com/michioxd/foo_opensubsonic/releases).
-2. Double click the downloaded file to install it. Or open foobar2000, go to `Preferences` -> `Components`, and click `Install`. Select the downloaded `foo_opensubsonic.fb2k-component` file to install the component directly from the archive.
+1. Download the latest [`foo_opensubsonic.fb2k-component`](https://github.com/michioxd/foo_opensubsonic/releases/latest/download/foo_opensubsonic.fb2k-component) from the [Releases page](https://github.com/michioxd/foo_opensubsonic/releases).
+2. Double click the downloaded file to install it. Or open foobar2000, go to `Preferences` -> `Components`, and click `Install`. Select the downloaded [`foo_opensubsonic.fb2k-component`](https://github.com/michioxd/foo_opensubsonic/releases/latest/download/foo_opensubsonic.fb2k-component) file to install the component directly from the archive.
 3. Open `Preferences` -> `Tools` -> `OpenSubsonic`.
 4. Enter your server URL, username, and password.
 5. Click `Sync now` to fetch library data and remote playlists.
 6. Play tracks from the generated playlists inside foobar2000.
+
+[Click here to download latest version of `foo_opensubsonic.fb2k-component`](https://github.com/michioxd/foo_opensubsonic/releases/latest/download/foo_opensubsonic.fb2k-component)
 
 ## Development
 
