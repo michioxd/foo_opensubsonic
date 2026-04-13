@@ -29,6 +29,19 @@ const char *skip_leading_slashes(const char *value) noexcept {
 	return value;
 }
 
+void append_server_key_part(std::string &out, const char *value) {
+	if (value == nullptr) {
+		return;
+	}
+
+	for (const char *cursor = value; *cursor != '\0'; ++cursor) {
+		const auto ch = static_cast<unsigned char>(*cursor);
+		if (std::isalnum(ch) != 0) {
+			out.push_back(static_cast<char>(std::tolower(ch)));
+		}
+	}
+}
+
 } // namespace
 
 namespace subsonic {
@@ -70,17 +83,52 @@ pfc::string8 normalize_base_url(const char *base_url) {
 	return normalized;
 }
 
-pfc::string8 make_subsonic_path(const char *track_id) {
+pfc::string8 generate_server_id() {
+	pfc::string8 guid = pfc::print_guid(pfc::createGUID());
+	guid.replace_string("{", "");
+	guid.replace_string("}", "");
+	guid.replace_string("-", "");
+
+	pfc::string8 out = "srv-";
+	out += guid;
+	return out;
+}
+
+pfc::string8 make_server_storage_id(const char *server_name,
+									const char *base_url) {
+	std::string seed;
+	append_server_key_part(seed, server_name);
+	seed.push_back('|');
+	append_server_key_part(seed, normalize_base_url(base_url).c_str());
+	if (seed.empty()) {
+		seed = "server";
+	}
+
+	const auto hash = md5_hex(seed.c_str());
+	pfc::string8 out = "srv-";
+	out.add_string(hash.c_str(), 12);
+	return out;
+}
+
+pfc::string8 make_subsonic_path(const char *server_id, const char *track_id) {
 	pfc::string8 path = k_scheme;
+	if (server_id != nullptr && *server_id != '\0') {
+		path += server_id;
+		path += "/";
+	}
 	if (track_id != nullptr) {
 		path += track_id;
 	}
 	return path;
 }
 
-bool extract_track_id_from_path(const char *path,
-								pfc::string_base &out_track_id) {
-	out_track_id.reset();
+pfc::string8 make_subsonic_path(const char *track_id) {
+	return make_subsonic_path(nullptr, track_id);
+}
+
+bool extract_track_identity_from_path(const char *path,
+									  track_identity &out_identity) {
+	out_identity = {};
 	if (!is_subsonic_path(path)) {
 		return false;
 	}
@@ -93,7 +141,34 @@ bool extract_track_id_from_path(const char *path,
 	if (cursor == end) {
 		return false;
 	}
-	out_track_id.add_string(cursor, static_cast<t_size>(end - cursor));
+
+	const char *slash = cursor;
+	while (slash < end && *slash != '/') {
+		++slash;
+	}
+
+	if (slash < end && *slash == '/') {
+		out_identity.server_id.add_string(cursor,
+										  static_cast<t_size>(slash - cursor));
+		out_identity.track_id.add_string(slash + 1,
+										 static_cast<t_size>(end - slash - 1));
+	} else {
+		out_identity.track_id.add_string(cursor,
+										 static_cast<t_size>(end - cursor));
+	}
+
+	out_identity.path = path;
+	return !out_identity.track_id.is_empty();
+}
+
+bool extract_track_id_from_path(const char *path,
+								pfc::string_base &out_track_id) {
+	out_track_id.reset();
+	track_identity identity;
+	if (!extract_track_identity_from_path(path, identity)) {
+		return false;
+	}
+	out_track_id = identity.track_id;
 	return out_track_id.length() > 0;
 }
 
@@ -146,10 +221,42 @@ pfc::string8 build_auth_query(const server_credentials &credentials,
 	return query;
 }
 
+std::vector<pfc::string8>
+build_api_base_urls(const server_credentials &credentials) {
+	std::vector<pfc::string8> bases;
+	bases.reserve(2);
+
+	const auto local_url = normalize_base_url(credentials.local_url);
+	if (!local_url.is_empty()) {
+		bases.push_back(local_url);
+	}
+
+	const auto base_url = normalize_base_url(credentials.base_url);
+	if (!base_url.is_empty()) {
+		bool exists = false;
+		for (const auto &item : bases) {
+			if (strings_equal(item, base_url)) {
+				exists = true;
+				break;
+			}
+		}
+		if (!exists) {
+			bases.push_back(base_url);
+		}
+	}
+
+	return bases;
+}
+
 pfc::string8 build_api_url(const server_credentials &credentials,
 						   const char *endpoint,
 						   const std::vector<query_param> &query_params) {
-	pfc::string8 base = normalize_base_url(credentials.base_url);
+	const auto bases = build_api_base_urls(credentials);
+	if (bases.empty()) {
+		return {};
+	}
+
+	pfc::string8 base = bases.front();
 	if (base.is_empty()) {
 		return {};
 	}

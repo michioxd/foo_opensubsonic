@@ -11,6 +11,9 @@ void shutdown();
 
 [[nodiscard]] bool try_get_track_metadata(const char *track_id,
 										  cached_track_metadata &out);
+[[nodiscard]] bool try_get_track_metadata(const char *server_id,
+										  const char *track_id,
+										  cached_track_metadata &out);
 [[nodiscard]] bool try_get_track_metadata_for_path(const char *path,
 												   cached_track_metadata &out);
 [[nodiscard]] bool try_make_file_info_for_path(const char *path,
@@ -24,7 +27,10 @@ void merge_track_metadata(const std::vector<cached_track_metadata> &entries,
 void replace_track_metadata(const std::vector<cached_track_metadata> &entries,
 							threaded_process_status &status,
 							abort_callback &abort);
-void remove_track_metadata(const char *track_id);
-void refresh_track(const char *track_id);
+void remove_server_metadata(const char *server_id,
+							threaded_process_status &status,
+							abort_callback &abort);
+void remove_track_metadata(const char *server_id, const char *track_id);
+void refresh_track(const char *server_id, const char *track_id);
 
 } // namespace subsonic::metadata

@@ -101,12 +101,31 @@ response open_api(const server_credentials &credentials, const char *endpoint,
 		throw exception_io_data();
 	}
 
-	const pfc::string8 url = build_api_url(credentials, endpoint, query_params);
-	if (url.is_empty()) {
-		throw exception_io_data();
+	std::exception_ptr last_error;
+	const auto base_urls = build_api_base_urls(credentials);
+	for (const auto &base_url : base_urls) {
+		server_credentials candidate = credentials;
+		candidate.base_url = base_url;
+		candidate.local_url.reset();
+
+		const pfc::string8 url =
+			build_api_url(candidate, endpoint, query_params);
+		if (url.is_empty()) {
+			continue;
+		}
+
+		try {
+			return open(url.c_str(), abort, params);
+		} catch (...) {
+			last_error = std::current_exception();
+		}
 	}
 
-	return open(url.c_str(), abort, params);
+	if (last_error != nullptr) {
+		std::rethrow_exception(last_error);
+	}
+
+	throw exception_io_data();
 }
 
 void read_all(file::ptr stream, mem_block_container &out, abort_callback &abort,

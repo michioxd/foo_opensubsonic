@@ -1,6 +1,7 @@
 #include "stdafx.h"
 
 #include "cache.h"
+#include "config.h"
 #include "metadata.h"
 
 #include "utils.h"
@@ -36,8 +37,17 @@ using track_metadata_map =
 std::shared_mutex g_track_metadata_mutex;
 track_metadata_map g_track_metadata;
 
-[[nodiscard]] std::string make_track_key(const char *track_id) {
-	return track_id != nullptr ? std::string(track_id) : std::string();
+[[nodiscard]] std::string make_track_key(const char *server_id,
+										 const char *track_id) {
+	if (server_id == nullptr || *server_id == '\0' || track_id == nullptr ||
+		*track_id == '\0') {
+		return {};
+	}
+
+	std::string key = server_id;
+	key.push_back('|');
+	key += track_id;
+	return key;
 }
 
 [[nodiscard]] pfc::string8 make_extra_info_key(const char *raw_key) {
@@ -263,6 +273,8 @@ void populate_file_info(const subsonic::cached_track_metadata &entry,
 		info.info_set("subsonic_cover_art_id", entry.cover_art_id);
 	if (!entry.track_id.is_empty())
 		info.info_set("subsonic_track_id", entry.track_id);
+	if (!entry.server_id.is_empty())
+		info.info_set("subsonic_server_id", entry.server_id);
 
 	try_set_info_from_extra(info, entry, "encoding",
 							{"suffix", "transcodedSuffix"});
@@ -299,12 +311,14 @@ void populate_file_info(const subsonic::cached_track_metadata &entry,
 	}
 }
 
-[[nodiscard]] metadb_handle_ptr make_handle_for_track(const char *track_id) {
-	if (track_id == nullptr || *track_id == '\0') {
+[[nodiscard]] metadb_handle_ptr make_handle_for_track(const char *server_id,
+													  const char *track_id) {
+	if (server_id == nullptr || *server_id == '\0' || track_id == nullptr ||
+		*track_id == '\0') {
 		return {};
 	}
 
-	const pfc::string8 path = subsonic::make_subsonic_path(track_id);
+	const pfc::string8 path = subsonic::make_subsonic_path(server_id, track_id);
 	return static_api_ptr_t<metadb>()->handle_create(path, 0);
 }
 
@@ -328,7 +342,8 @@ void dispatch_refresh_for_track_ids(
 			continue;
 		}
 
-		const auto handle = make_handle_for_track(entry.track_id);
+		const auto handle =
+			make_handle_for_track(entry.server_id, entry.track_id);
 		if (handle.is_valid()) {
 			handles.add_item(handle);
 		}
@@ -343,7 +358,7 @@ void hint_metadata_async(const subsonic::cached_track_metadata &entry) {
 		return;
 	}
 
-	const auto handle = make_handle_for_track(entry.track_id);
+	const auto handle = make_handle_for_track(entry.server_id, entry.track_id);
 	if (!handle.is_valid()) {
 		return;
 	}
@@ -367,7 +382,8 @@ void replace_snapshot_locked(
 		if (!entry.is_valid()) {
 			continue;
 		}
-		next.insert_or_assign(make_track_key(entry.track_id), entry);
+		next.insert_or_assign(make_track_key(entry.server_id, entry.track_id),
+							  entry);
 	}
 
 	std::unique_lock lock(g_track_metadata_mutex);
@@ -380,11 +396,12 @@ void upsert_snapshot(const subsonic::cached_track_metadata &entry) {
 	}
 
 	std::unique_lock lock(g_track_metadata_mutex);
-	g_track_metadata.insert_or_assign(make_track_key(entry.track_id), entry);
+	g_track_metadata.insert_or_assign(
+		make_track_key(entry.server_id, entry.track_id), entry);
 }
 
-void remove_snapshot(const char *track_id) {
-	const auto key = make_track_key(track_id);
+void remove_snapshot(const char *server_id, const char *track_id) {
+	const auto key = make_track_key(server_id, track_id);
 	if (key.empty()) {
 		return;
 	}
@@ -393,11 +410,11 @@ void remove_snapshot(const char *track_id) {
 	g_track_metadata.erase(key);
 }
 
-[[nodiscard]] bool try_get_snapshot(const char *track_id,
+[[nodiscard]] bool try_get_snapshot(const char *server_id, const char *track_id,
 									subsonic::cached_track_metadata &out) {
 	out = {};
 
-	const auto key = make_track_key(track_id);
+	const auto key = make_track_key(server_id, track_id);
 	if (key.empty()) {
 		return false;
 	}
@@ -547,18 +564,24 @@ void shutdown() {
 }
 
 bool try_get_track_metadata(const char *track_id, cached_track_metadata &out) {
-	return try_get_snapshot(track_id, out);
+	return try_get_snapshot(subsonic::config::load_selected_server_id(),
+							track_id, out);
+}
+
+bool try_get_track_metadata(const char *server_id, const char *track_id,
+							cached_track_metadata &out) {
+	return try_get_snapshot(server_id, track_id, out);
 }
 
 bool try_get_track_metadata_for_path(const char *path,
 									 cached_track_metadata &out) {
-	pfc::string8 track_id;
-	if (!extract_track_id_from_path(path, track_id)) {
+	track_identity identity;
+	if (!extract_track_identity_from_path(path, identity)) {
 		out = {};
 		return false;
 	}
 
-	return try_get_snapshot(track_id, out);
+	return try_get_snapshot(identity.server_id, identity.track_id, out);
 }
 
 bool try_make_file_info_for_path(const char *path, file_info_impl &out) {
@@ -580,7 +603,7 @@ void publish_track_metadata(const cached_track_metadata &entry) {
 	cache::upsert_track_metadata(entry);
 	upsert_snapshot(entry);
 	hint_metadata_async(entry);
-	refresh_track(entry.track_id);
+	refresh_track(entry.server_id, entry.track_id);
 }
 
 void clear_all(threaded_process_status &status, abort_callback &abort) {
@@ -609,7 +632,7 @@ void merge_track_metadata(const std::vector<cached_track_metadata> &entries,
 	for (const auto &entry : entries) {
 		if (!entry.is_valid())
 			continue;
-		const auto key = make_track_key(entry.track_id);
+		const auto key = make_track_key(entry.server_id, entry.track_id);
 		if (key.empty())
 			continue;
 
@@ -637,7 +660,8 @@ void merge_track_metadata(const std::vector<cached_track_metadata> &entries,
 		cache::upsert_track_metadata(entry);
 		upsert_snapshot(entry);
 
-		const auto handle = make_handle_for_track(entry.track_id);
+		const auto handle =
+			make_handle_for_track(entry.server_id, entry.track_id);
 		if (handle.is_valid()) {
 			handles.add_item(handle);
 
@@ -681,7 +705,8 @@ void replace_track_metadata(const std::vector<cached_track_metadata> &entries,
 		if (!entry.is_valid())
 			continue;
 
-		const auto handle = make_handle_for_track(entry.track_id);
+		const auto handle =
+			make_handle_for_track(entry.server_id, entry.track_id);
 		if (handle.is_valid()) {
 			handles.add_item(handle);
 
@@ -702,14 +727,57 @@ void replace_track_metadata(const std::vector<cached_track_metadata> &entries,
 	dispatch_refresh_for_handles(handles);
 }
 
-void remove_track_metadata(const char *track_id) {
-	cache::remove_track_metadata(track_id);
-	remove_snapshot(track_id);
-	refresh_track(track_id);
+void remove_server_metadata(const char *server_id,
+							threaded_process_status &status,
+							abort_callback &abort) {
+	if (server_id == nullptr || *server_id == '\0') {
+		return;
+	}
+
+	const auto cached_entries = cache::load_all_track_metadata();
+	std::vector<cached_track_metadata> removed_entries;
+	removed_entries.reserve(cached_entries.size());
+	for (const auto &entry : cached_entries) {
+		if (entry.is_valid() &&
+			subsonic::strings_equal(entry.server_id, server_id)) {
+			removed_entries.push_back(entry);
+		}
+	}
+
+	for (size_t i = 0; i < removed_entries.size(); ++i) {
+		if (i % 500 == 0) {
+			abort.check();
+			status.set_progress(i, removed_entries.size());
+			status.set_item(PFC_string_formatter()
+							<< "Removing cached tracks: " << i << " / "
+							<< removed_entries.size());
+		}
+
+		cache::remove_track_metadata(removed_entries[i].server_id,
+									 removed_entries[i].track_id);
+	}
+
+	{
+		std::unique_lock lock(g_track_metadata_mutex);
+		for (const auto &entry : removed_entries) {
+			g_track_metadata.erase(
+				make_track_key(entry.server_id, entry.track_id));
+		}
+	}
+
+	status.set_progress(removed_entries.size(), removed_entries.size());
+	status.set_item("Refreshing removed tracks...");
+	dispatch_refresh_for_track_ids(removed_entries);
 }
 
-void refresh_track(const char *track_id) {
-	const auto handle = make_handle_for_track(track_id);
+void remove_track_metadata(const char *server_id, const char *track_id) {
+	cache::remove_track_metadata(server_id, track_id);
+	remove_snapshot(server_id, track_id);
+	refresh_track(server_id, track_id);
+}
+
+void refresh_track(const char *server_id, const char *track_id) {
+	const auto handle = make_handle_for_track(server_id, track_id);
 	if (!handle.is_valid()) {
 		return;
 	}

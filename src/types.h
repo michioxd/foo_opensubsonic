@@ -13,7 +13,10 @@ inline constexpr const char *k_default_api_version = "1.16.1";
 inline constexpr const char *k_default_client_name = "foo_opensubsonic";
 
 struct server_credentials {
+	pfc::string8 server_id;
+	pfc::string8 server_name;
 	pfc::string8 base_url;
+	pfc::string8 local_url;
 	pfc::string8 username;
 	pfc::string8 password;
 	pfc::string8 api_version = k_default_api_version;
@@ -21,9 +24,15 @@ struct server_credentials {
 	bool allow_insecure_tls = false;
 
 	[[nodiscard]] bool is_configured() const noexcept {
-		return !base_url.is_empty() && !username.is_empty() &&
+		return !server_id.is_empty() && !server_name.is_empty() &&
+			   !base_url.is_empty() && !username.is_empty() &&
 			   !password.is_empty();
 	}
+};
+
+struct server_settings {
+	std::vector<server_credentials> servers;
+	pfc::string8 selected_server_id;
 };
 
 struct query_param {
@@ -39,11 +48,13 @@ struct query_param {
 };
 
 struct track_identity {
+	pfc::string8 server_id;
 	pfc::string8 track_id;
 	pfc::string8 path;
 
 	[[nodiscard]] bool is_valid() const noexcept {
-		return !track_id.is_empty() && !path.is_empty();
+		return !server_id.is_empty() && !track_id.is_empty() &&
+			   !path.is_empty();
 	}
 };
 
@@ -55,6 +66,7 @@ struct track_metadata_field {
 };
 
 struct cached_track_metadata {
+	pfc::string8 server_id;
 	pfc::string8 track_id;
 	pfc::string8 artist;
 	pfc::string8 title;
@@ -71,11 +83,12 @@ struct cached_track_metadata {
 	std::vector<track_metadata_field> extra_fields;
 
 	[[nodiscard]] bool is_valid() const noexcept {
-		return !track_id.is_empty();
+		return !server_id.is_empty() && !track_id.is_empty();
 	}
 };
 
 struct artwork_cache_entry {
+	pfc::string8 server_id;
 	pfc::string8 cover_art_id;
 	pfc::string8 mime_type;
 	pfc::string8 local_path;
@@ -83,7 +96,8 @@ struct artwork_cache_entry {
 	std::uint64_t last_access_unix_ms = 0;
 
 	[[nodiscard]] bool is_valid() const noexcept {
-		return !cover_art_id.is_empty() && !local_path.is_empty();
+		return !server_id.is_empty() && !cover_art_id.is_empty() &&
+			   !local_path.is_empty();
 	}
 };
 

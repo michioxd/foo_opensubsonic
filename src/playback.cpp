@@ -53,21 +53,24 @@ void clear_now_playing_state() {
 }
 
 void send_playback_ping_async(const char *track_id, bool submission,
-							  const char *scope) {
+							  const char *server_id, const char *scope) {
 	if (track_id == nullptr || *track_id == '\0') {
 		return;
 	}
 
-	const auto credentials = subsonic::config::load_server_credentials();
-	if (!credentials.is_configured()) {
+	subsonic::server_credentials credentials;
+	if (!subsonic::config::try_get_server_credentials(server_id, credentials) ||
+		!credentials.is_configured()) {
 		return;
 	}
 
 	const pfc::string8 track_id_copy = track_id;
+	const pfc::string8 server_id_copy = server_id != nullptr ? server_id : "";
 	const pfc::string8 scope_copy =
 		scope != nullptr ? scope : k_now_playing_scope;
 
-	fb2k::splitTask([credentials, track_id_copy, submission, scope_copy] {
+	fb2k::splitTask([credentials, track_id_copy, submission, scope_copy,
+					 server_id_copy] {
 		try {
 			auto response = subsonic::http::open_api(
 				credentials, k_scrobble_endpoint, fb2k::noAbort,
@@ -86,11 +89,16 @@ void send_playback_ping_async(const char *track_id, bool submission,
 				return;
 			}
 
-			subsonic::log_info(scope_copy, (PFC_string_formatter()
-											<< "sent playback ping for id="
-											<< track_id_copy << " submission="
-											<< (submission ? "true" : "false"))
-											   .c_str());
+			subsonic::log_info(scope_copy,
+							   (PFC_string_formatter()
+								<< "sent playback ping for id=" << track_id_copy
+								<< " submission="
+								<< (server_id_copy.is_empty()
+										? ""
+										: PFC_string_formatter()
+											  << " server=" << server_id_copy)
+								<< (submission ? "true" : "false"))
+								   .c_str());
 		} catch (const std::exception &e) {
 			subsonic::log_exception(scope_copy, e);
 		} catch (...) {
@@ -100,23 +108,26 @@ void send_playback_ping_async(const char *track_id, bool submission,
 }
 
 void notify_now_playing_async(const char *path, bool force) {
-	pfc::string8 track_id;
-	if (!subsonic::extract_track_id_from_path(path, track_id) ||
-		track_id.is_empty() || !should_send_now_playing(track_id, force)) {
+	subsonic::track_identity identity;
+	if (!subsonic::extract_track_identity_from_path(path, identity) ||
+		identity.track_id.is_empty() ||
+		!should_send_now_playing(identity.track_id, force)) {
 		return;
 	}
 
-	send_playback_ping_async(track_id, false, k_now_playing_scope);
+	send_playback_ping_async(identity.track_id, false, identity.server_id,
+							 k_now_playing_scope);
 }
 
 void submit_scrobble_async(const char *path) {
-	pfc::string8 track_id;
-	if (!subsonic::extract_track_id_from_path(path, track_id) ||
-		track_id.is_empty()) {
+	subsonic::track_identity identity;
+	if (!subsonic::extract_track_identity_from_path(path, identity) ||
+		identity.track_id.is_empty()) {
 		return;
 	}
 
-	send_playback_ping_async(track_id, true, "scrobble");
+	send_playback_ping_async(identity.track_id, true, identity.server_id,
+							 "scrobble");
 }
 
 class opensubsonic_playback_callback : public play_callback_static {

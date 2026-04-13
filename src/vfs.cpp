@@ -28,6 +28,11 @@ bool try_get_track_id(const char *path, pfc::string_base &out_track_id) {
 	return subsonic::extract_track_id_from_path(path, out_track_id);
 }
 
+bool try_get_track_identity(const char *path,
+							subsonic::track_identity &out_identity) {
+	return subsonic::extract_track_identity_from_path(path, out_identity);
+}
+
 [[nodiscard]] bool
 try_get_extra_field_value(const subsonic::cached_track_metadata &track,
 						  const char *field_name, pfc::string_base &out_value) {
@@ -361,12 +366,21 @@ class subsonic_remote_file : public file_readonly_t<file_v2> {
 class subsonic_filesystem_impl : public filesystem_v3 {
   public:
 	bool get_canonical_path(const char *path, pfc::string_base &out) override {
-		pfc::string8 track_id;
-		if (!try_get_track_id(path, track_id)) {
+		subsonic::track_identity identity;
+		if (!try_get_track_identity(path, identity)) {
 			return false;
 		}
 
-		out = subsonic::make_subsonic_path(track_id);
+		pfc::string8 server_id = identity.server_id;
+		if (server_id.is_empty()) {
+			server_id = subsonic::config::load_selected_server_id();
+			if (server_id.is_empty()) {
+				server_id =
+					subsonic::config::load_server_credentials().server_id;
+			}
+		}
+
+		out = subsonic::make_subsonic_path(server_id, identity.track_id);
 		return true;
 	}
 
@@ -399,30 +413,37 @@ class subsonic_filesystem_impl : public filesystem_v3 {
 		}
 
 		pfc::string8 track_id;
-		if (!try_get_track_id(canonical_path, track_id)) {
+		subsonic::track_identity identity;
+		if (!try_get_track_identity(canonical_path, identity)) {
 			throw exception_io_not_found();
 		}
 
 		subsonic::cached_track_metadata track;
 		[[maybe_unused]] const bool has_cached_track_metadata =
-			subsonic::metadata::try_get_track_metadata(track_id, track);
+			subsonic::metadata::try_get_track_metadata(
+				identity.server_id, identity.track_id, track);
 
-		const auto credentials = subsonic::config::load_server_credentials();
-		if (!credentials.is_configured()) {
+		subsonic::server_credentials credentials;
+		const bool has_server_credentials =
+			subsonic::config::try_get_server_credentials(identity.server_id,
+														 credentials);
+		if (!has_server_credentials || !credentials.is_configured()) {
 			throw exception_io_data();
 		}
 
 		auto wrapped = fb2k::service_new<subsonic_remote_file>();
-		wrapped->initialize(credentials, track_id,
+		wrapped->initialize(credentials, identity.track_id,
 							make_fallback_content_type(track),
 							try_get_known_total_size(track), abort);
 
 		file::ptr file_out = wrapped.get_ptr();
 		out = file_out;
 
-		subsonic::log_info(k_scope, (PFC_string_formatter()
-									 << "opened remote track id=" << track_id
-									 << " path=" << canonical_path));
+		subsonic::log_info(k_scope,
+						   (PFC_string_formatter()
+							<< "opened remote track id=" << identity.track_id
+							<< " server=" << identity.server_id
+							<< " path=" << canonical_path));
 	}
 
 	void remove(const char *path, abort_callback &abort) override {
@@ -534,7 +555,10 @@ class subsonic_filesystem_impl : public filesystem_v3 {
 		t_filestats2 stats = filestats2_invalid;
 		populate_path_stats(stats);
 		subsonic::cached_track_metadata track;
-		if (subsonic::metadata::try_get_track_metadata(track_id, track)) {
+		subsonic::track_identity identity;
+		if (try_get_track_identity(canonical_path, identity) &&
+			subsonic::metadata::try_get_track_metadata(
+				identity.server_id, identity.track_id, track)) {
 			stats.m_size = try_get_known_total_size(track);
 		}
 		return stats;

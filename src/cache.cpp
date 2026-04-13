@@ -13,14 +13,61 @@ namespace {
 constexpr const char *k_track_domain = "foo_opensubsonic.cache.track";
 constexpr const char *k_artwork_domain = "foo_opensubsonic.cache.artwork";
 
-constexpr t_uint32 k_track_blob_version = 2;
-constexpr t_uint32 k_artwork_blob_version = 2;
+constexpr t_uint32 k_track_blob_version = 3;
+constexpr t_uint32 k_artwork_blob_version = 3;
 
 [[nodiscard]] pfc::string8 make_cache_key(const char *domain, const char *id) {
 	if (domain == nullptr || id == nullptr || *id == '\0') {
 		return {};
 	}
 	return PFC_string_formatter() << domain << "." << subsonic::md5_hex(id);
+}
+
+[[nodiscard]] pfc::string8 make_scoped_id(const char *server_id,
+										  const char *id) {
+	if (server_id == nullptr || *server_id == '\0' || id == nullptr ||
+		*id == '\0') {
+		return {};
+	}
+
+	return PFC_string_formatter() << server_id << "|" << id;
+}
+
+[[nodiscard]] pfc::string8 current_server_id() {
+	return subsonic::config::load_selected_server_id();
+}
+
+[[nodiscard]] bool
+is_same_artwork_identity(const subsonic::artwork_cache_entry &lhs,
+						 const char *server_id, const char *cover_art_id) {
+	return subsonic::strings_equal(lhs.server_id, server_id) &&
+		   subsonic::strings_equal(lhs.cover_art_id, cover_art_id);
+}
+
+[[nodiscard]] bool is_shared_artwork_file(
+	const subsonic::artwork_cache_entry &target,
+	const std::vector<subsonic::artwork_cache_entry> &entries) {
+	if (target.local_path.is_empty()) {
+		return false;
+	}
+
+	for (const auto &entry : entries) {
+		if (!entry.is_valid() ||
+			is_same_artwork_identity(entry, target.server_id,
+									 target.cover_art_id)) {
+			continue;
+		}
+
+		if ((!target.content_hash.is_empty() &&
+			 !entry.content_hash.is_empty() &&
+			 subsonic::strings_equal(entry.content_hash,
+									 target.content_hash)) ||
+			subsonic::strings_equal(entry.local_path, target.local_path)) {
+			return true;
+		}
+	}
+
+	return false;
 }
 
 void write_track_extra_fields(
@@ -56,6 +103,7 @@ fb2k::memBlockRef
 serialize_track(const subsonic::cached_track_metadata &entry) {
 	stream_writer_formatter_simple<> writer;
 	writer << k_track_blob_version;
+	writer << entry.server_id;
 	writer << entry.track_id;
 	writer << entry.artist;
 	writer << entry.title;
@@ -83,11 +131,14 @@ bool deserialize_track(fb2k::memBlockRef block,
 		block->data(), pfc::downcast_guarded<t_size>(block->size()));
 	t_uint32 version = 0;
 	reader >> version;
-	if (version != 1 && version != k_track_blob_version) {
+	if (version < 1 || version > k_track_blob_version) {
 		return false;
 	}
 
 	subsonic::cached_track_metadata value;
+	if (version >= 3) {
+		reader >> value.server_id;
+	}
 	reader >> value.track_id;
 	reader >> value.artist;
 	reader >> value.title;
@@ -108,6 +159,10 @@ bool deserialize_track(fb2k::memBlockRef block,
 		value.extra_fields.clear();
 	}
 
+	if (value.server_id.is_empty()) {
+		value.server_id = current_server_id();
+	}
+
 	if (!value.is_valid()) {
 		return false;
 	}
@@ -120,6 +175,7 @@ fb2k::memBlockRef
 serialize_artwork(const subsonic::artwork_cache_entry &entry) {
 	stream_writer_formatter_simple<> writer;
 	writer << k_artwork_blob_version;
+	writer << entry.server_id;
 	writer << entry.cover_art_id;
 	writer << entry.mime_type;
 	writer << entry.local_path;
@@ -138,11 +194,14 @@ bool deserialize_artwork(fb2k::memBlockRef block,
 		block->data(), pfc::downcast_guarded<t_size>(block->size()));
 	t_uint32 version = 0;
 	reader >> version;
-	if (version != 1 && version != k_artwork_blob_version) {
+	if (version < 1 || version > k_artwork_blob_version) {
 		return false;
 	}
 
 	subsonic::artwork_cache_entry value;
+	if (version >= 3) {
+		reader >> value.server_id;
+	}
 	reader >> value.cover_art_id;
 	reader >> value.mime_type;
 	reader >> value.local_path;
@@ -154,6 +213,9 @@ bool deserialize_artwork(fb2k::memBlockRef block,
 	} else {
 		value.content_hash.reset();
 		value.last_access_unix_ms = 0;
+	}
+	if (value.server_id.is_empty()) {
+		value.server_id = current_server_id();
 	}
 	if (!value.is_valid()) {
 		return false;
@@ -204,6 +266,18 @@ void reset(abort_callback &abort) {
 		}
 	}
 
+	const auto database_path = config::database_path();
+	if (!database_path.is_empty() &&
+		filesystem::g_exists(database_path, abort)) {
+		filesystem::g_remove(database_path, abort);
+	}
+
+	const auto metadata_cache_path = config::metadata_json_cache_path();
+	if (!metadata_cache_path.is_empty() &&
+		filesystem::g_exists(metadata_cache_path, abort)) {
+		filesystem::g_remove(metadata_cache_path, abort);
+	}
+
 	static_api_ptr_t<fb2k::configStore> store;
 	std::vector<pfc::string8> keys_to_delete;
 	{
@@ -231,13 +305,16 @@ void upsert_track_metadata(const cached_track_metadata &entry) {
 		throw pfc::exception_invalid_params();
 	}
 
-	const pfc::string8 key = make_cache_key(k_track_domain, entry.track_id);
+	const pfc::string8 scoped_id =
+		make_scoped_id(entry.server_id, entry.track_id);
 	static_api_ptr_t<fb2k::configStore> store;
-	store->setConfigBlob(key, serialize_track(entry));
+	store->setConfigBlob(make_cache_key(k_track_domain, scoped_id),
+						 serialize_track(entry));
 }
 
-void remove_track_metadata(const char *track_id) {
-	const pfc::string8 key = make_cache_key(k_track_domain, track_id);
+void remove_track_metadata(const char *server_id, const char *track_id) {
+	const pfc::string8 scoped_id = make_scoped_id(server_id, track_id);
+	const pfc::string8 key = make_cache_key(k_track_domain, scoped_id);
 	if (key.is_empty()) {
 		return;
 	}
@@ -246,10 +323,12 @@ void remove_track_metadata(const char *track_id) {
 	store->deleteConfigBlob(key);
 }
 
-bool try_get_track_metadata(const char *track_id, cached_track_metadata &out) {
+bool try_get_track_metadata(const char *server_id, const char *track_id,
+							cached_track_metadata &out) {
 	out = {};
 
-	const pfc::string8 key = make_cache_key(k_track_domain, track_id);
+	const pfc::string8 key =
+		make_cache_key(k_track_domain, make_scoped_id(server_id, track_id));
 	if (key.is_empty()) {
 		return false;
 	}
@@ -310,7 +389,8 @@ void replace_track_metadata(const std::vector<cached_track_metadata> &entries,
 		if (!entry.is_valid())
 			continue;
 
-		const pfc::string8 key = make_cache_key(k_track_domain, entry.track_id);
+		const pfc::string8 key = make_cache_key(
+			k_track_domain, make_scoped_id(entry.server_id, entry.track_id));
 		store->setConfigBlob(key, serialize_track(entry));
 	}
 }
@@ -320,23 +400,25 @@ void upsert_artwork_entry(const artwork_cache_entry &entry) {
 		throw pfc::exception_invalid_params();
 	}
 
-	const pfc::string8 key =
-		make_cache_key(k_artwork_domain, entry.cover_art_id);
+	const pfc::string8 key = make_cache_key(
+		k_artwork_domain, make_scoped_id(entry.server_id, entry.cover_art_id));
 	static_api_ptr_t<fb2k::configStore> store;
 	store->setConfigBlob(key, serialize_artwork(entry));
 }
 
-void remove_artwork_entry(const char *cover_art_id) {
-	const pfc::string8 key = make_cache_key(k_artwork_domain, cover_art_id);
+void remove_artwork_entry(const char *server_id, const char *cover_art_id) {
+	const pfc::string8 key = make_cache_key(
+		k_artwork_domain, make_scoped_id(server_id, cover_art_id));
 	if (key.is_empty()) {
 		return;
 	}
 
 	artwork_cache_entry existing;
 	abort_callback_dummy abort;
-	if (try_get_artwork_entry(cover_art_id, existing) &&
+	if (try_get_artwork_entry(server_id, cover_art_id, existing) &&
 		!existing.local_path.is_empty() &&
-		filesystem::g_exists(existing.local_path, abort)) {
+		filesystem::g_exists(existing.local_path, abort) &&
+		!is_shared_artwork_file(existing, load_all_artwork_entries())) {
 		filesystem::g_remove(existing.local_path, abort);
 	}
 
@@ -344,10 +426,56 @@ void remove_artwork_entry(const char *cover_art_id) {
 	store->deleteConfigBlob(key);
 }
 
-bool try_get_artwork_entry(const char *cover_art_id, artwork_cache_entry &out) {
+void remove_server_artwork_entries(const char *server_id,
+								   threaded_process_status &status,
+								   abort_callback &abort) {
+	if (server_id == nullptr || *server_id == '\0') {
+		return;
+	}
+
+	const auto entries = load_all_artwork_entries();
+	std::vector<artwork_cache_entry> matches;
+	matches.reserve(entries.size());
+	for (const auto &entry : entries) {
+		if (entry.is_valid() &&
+			subsonic::strings_equal(entry.server_id, server_id)) {
+			matches.push_back(entry);
+		}
+	}
+
+	static_api_ptr_t<fb2k::configStore> store;
+	const auto transaction = store->acquireTransactionScope();
+
+	for (size_t i = 0; i < matches.size(); ++i) {
+		if (i % 100 == 0) {
+			abort.check();
+			status.set_progress(i, matches.size());
+			status.set_item(PFC_string_formatter()
+							<< "Removing cached artwork: " << i << " / "
+							<< matches.size());
+		}
+
+		const auto &entry = matches[i];
+		if (!entry.local_path.is_empty() &&
+			filesystem::g_exists(entry.local_path, abort) &&
+			!is_shared_artwork_file(entry, entries)) {
+			filesystem::g_remove(entry.local_path, abort);
+		}
+
+		store->deleteConfigBlob(make_cache_key(
+			k_artwork_domain,
+			make_scoped_id(entry.server_id, entry.cover_art_id)));
+	}
+
+	status.set_progress(matches.size(), matches.size());
+}
+
+bool try_get_artwork_entry(const char *server_id, const char *cover_art_id,
+						   artwork_cache_entry &out) {
 	out = {};
 
-	const pfc::string8 key = make_cache_key(k_artwork_domain, cover_art_id);
+	const pfc::string8 key = make_cache_key(
+		k_artwork_domain, make_scoped_id(server_id, cover_art_id));
 	if (key.is_empty()) {
 		return false;
 	}

@@ -31,6 +31,20 @@ enum class ensure_artwork_cached_result {
 	downloaded,
 };
 
+[[nodiscard]] std::string make_track_key(const char *server_id,
+										 const char *track_id) {
+	return std::string(PFC_string_formatter()
+					   << (server_id != nullptr ? server_id : "") << "|"
+					   << (track_id != nullptr ? track_id : ""));
+}
+
+[[nodiscard]] std::string make_cover_art_key(const char *server_id,
+											 const char *cover_art_id) {
+	return std::string(PFC_string_formatter()
+					   << (server_id != nullptr ? server_id : "") << "|"
+					   << (cover_art_id != nullptr ? cover_art_id : ""));
+}
+
 [[nodiscard]] bool is_supported_art_id(const GUID &art_id) noexcept {
 	return art_id == album_art_ids::cover_front;
 }
@@ -203,6 +217,36 @@ try_use_cached_artwork(subsonic::artwork_cache_entry &cached_entry,
 	return true;
 }
 
+[[nodiscard]] bool try_reuse_existing_artwork_mapping(
+	const subsonic::cached_track_metadata &track_meta, pfc::string8 &out_path,
+	pfc::string8 &out_mime_type, abort_callback &abort) {
+	if (track_meta.cover_art_id.is_empty()) {
+		return false;
+	}
+
+	auto entries = subsonic::cache::load_all_artwork_entries();
+	for (auto &entry : entries) {
+		abort.check();
+		if (!entry.is_valid() ||
+			!subsonic::strings_equal(entry.cover_art_id,
+									 track_meta.cover_art_id)) {
+			continue;
+		}
+
+		if (!try_use_cached_artwork(entry, out_path, out_mime_type, abort)) {
+			continue;
+		}
+
+		subsonic::artwork_cache_entry alias = entry;
+		alias.server_id = track_meta.server_id;
+		alias.cover_art_id = track_meta.cover_art_id;
+		subsonic::cache::upsert_artwork_entry(alias);
+		return true;
+	}
+
+	return false;
+}
+
 ensure_artwork_cached_result
 ensure_artwork_cached(const subsonic::cached_track_metadata &track_meta,
 					  pfc::string8 &out_path, pfc::string8 &out_mime_type,
@@ -215,18 +259,26 @@ ensure_artwork_cached(const subsonic::cached_track_metadata &track_meta,
 	}
 
 	subsonic::artwork_cache_entry cached_entry;
-	if (subsonic::cache::try_get_artwork_entry(track_meta.cover_art_id,
-											   cached_entry)) {
+	if (subsonic::cache::try_get_artwork_entry(
+			track_meta.server_id, track_meta.cover_art_id, cached_entry)) {
 		if (try_use_cached_artwork(cached_entry, out_path, out_mime_type,
 								   abort)) {
 			return ensure_artwork_cached_result::already_cached;
 		}
 
-		subsonic::cache::remove_artwork_entry(track_meta.cover_art_id);
+		subsonic::cache::remove_artwork_entry(track_meta.server_id,
+											  track_meta.cover_art_id);
 	}
 
-	const auto credentials = subsonic::config::load_server_credentials();
-	if (!credentials.is_configured()) {
+	if (try_reuse_existing_artwork_mapping(track_meta, out_path, out_mime_type,
+										   abort)) {
+		return ensure_artwork_cached_result::already_cached;
+	}
+
+	subsonic::server_credentials credentials;
+	if (!subsonic::config::try_get_server_credentials(track_meta.server_id,
+													  credentials) ||
+		!credentials.is_configured()) {
 		return ensure_artwork_cached_result::unavailable;
 	}
 
@@ -272,6 +324,7 @@ ensure_artwork_cached(const subsonic::cached_track_metadata &track_meta,
 	}
 
 	subsonic::artwork_cache_entry entry;
+	entry.server_id = track_meta.server_id;
 	entry.cover_art_id = track_meta.cover_art_id;
 	entry.mime_type = mime_type;
 	entry.local_path = local_path;
@@ -292,7 +345,7 @@ load_valid_cached_artwork_entries(abort_callback &abort) {
 
 	for (const auto &entry : entries) {
 		abort.check();
-		if (entry.cover_art_id.is_empty() || entry.local_path.is_empty()) {
+		if (!entry.is_valid()) {
 			continue;
 		}
 
@@ -300,7 +353,8 @@ load_valid_cached_artwork_entries(abort_callback &abort) {
 			continue;
 		}
 
-		result.emplace(std::string(entry.cover_art_id.c_str()), entry);
+		result.emplace(make_cover_art_key(entry.server_id, entry.cover_art_id),
+					   entry);
 	}
 
 	return result;
@@ -358,6 +412,7 @@ download_artwork_to_cache(const subsonic::cached_track_metadata &track_meta,
 	}
 
 	subsonic::artwork_cache_entry entry;
+	entry.server_id = track_meta.server_id;
 	entry.cover_art_id = track_meta.cover_art_id;
 	entry.mime_type = mime_type;
 	entry.local_path = local_path;
@@ -445,9 +500,9 @@ class subsonic_album_art_fallback_impl : public album_art_fallback {
 class subsonic_album_art_extractor_impl : public album_art_extractor_v2 {
   public:
 	bool is_our_path(const char *path, const char *extension) override {
-		pfc::string8 dummy_id;
+		subsonic::track_identity identity;
 		(void)extension;
-		return subsonic::extract_track_id_from_path(path, dummy_id);
+		return subsonic::extract_track_identity_from_path(path, identity);
 	}
 
 	album_art_extractor_instance_ptr open(file_ptr file_hint, const char *path,
@@ -470,8 +525,8 @@ static service_factory_single_t<subsonic_album_art_fallback_impl>
 
 namespace subsonic::artwork {
 bool is_supported_path(const char *path) noexcept {
-	pfc::string8 dummy;
-	return extract_track_id_from_path(path, dummy);
+	track_identity identity;
+	return extract_track_identity_from_path(path, identity);
 }
 bool try_load(const char *path, const GUID &art_id,
 			  album_art_data_ptr &out_data, album_art_path_list::ptr &out_paths,
@@ -525,16 +580,16 @@ prefetch_for_library_items(metadb_handle_list_cref items,
 			continue;
 		}
 
-		metadata_by_track_id.emplace(std::string(entry.track_id.c_str()),
-									 &entry);
+		metadata_by_track_id.emplace(
+			make_track_key(entry.server_id, entry.track_id), &entry);
 	}
 
 	auto cached_artwork_entries = load_valid_cached_artwork_entries(abort);
 
 	std::vector<cached_track_metadata> pending_downloads;
 	pending_downloads.reserve(items.get_count());
-	std::unordered_set<std::string> seen_cover_art_ids;
-	seen_cover_art_ids.reserve(items.get_count());
+	std::unordered_set<std::string> seen_cover_art_keys;
+	seen_cover_art_keys.reserve(items.get_count());
 
 	for (t_size i = 0; i < items.get_count(); ++i) {
 		if (i % 500 == 0) {
@@ -555,14 +610,14 @@ prefetch_for_library_items(metadb_handle_list_cref items,
 			continue;
 		}
 
-		pfc::string8 track_id;
-		if (!extract_track_id_from_path(path, track_id) ||
-			track_id.is_empty()) {
+		track_identity identity;
+		if (!extract_track_identity_from_path(path, identity) ||
+			!identity.is_valid()) {
 			continue;
 		}
 
-		const auto metadata_it =
-			metadata_by_track_id.find(std::string(track_id.c_str()));
+		const auto metadata_it = metadata_by_track_id.find(
+			make_track_key(identity.server_id, identity.track_id));
 		if (metadata_it == metadata_by_track_id.end() ||
 			metadata_it->second == nullptr) {
 			continue;
@@ -573,13 +628,13 @@ prefetch_for_library_items(metadb_handle_list_cref items,
 			continue;
 		}
 
-		if (!seen_cover_art_ids.emplace(track_meta.cover_art_id.c_str())
-				 .second) {
+		const auto cover_art_key =
+			make_cover_art_key(track_meta.server_id, track_meta.cover_art_id);
+		if (!seen_cover_art_keys.emplace(cover_art_key).second) {
 			continue;
 		}
 
-		if (cached_artwork_entries.find(
-				std::string(track_meta.cover_art_id.c_str())) !=
+		if (cached_artwork_entries.find(cover_art_key) !=
 			cached_artwork_entries.end()) {
 			++result.already_cached_count;
 			continue;
@@ -588,7 +643,7 @@ prefetch_for_library_items(metadb_handle_list_cref items,
 		pending_downloads.push_back(track_meta);
 	}
 
-	result.unique_artwork_count = seen_cover_art_ids.size();
+	result.unique_artwork_count = seen_cover_art_keys.size();
 
 	if (pending_downloads.empty()) {
 		status.set_progress(result.unique_artwork_count,
@@ -600,14 +655,9 @@ prefetch_for_library_items(metadb_handle_list_cref items,
 		return result;
 	}
 
-	const auto credentials = subsonic::config::load_server_credentials();
-	if (!credentials.is_configured()) {
-		status.set_item(
-			"Artwork cache skipped: server settings are not configured.");
-		return result;
-	}
-
 	subsonic::config::ensure_cache_layout(abort);
+	std::unordered_map<std::string, subsonic::server_credentials>
+		credentials_by_server_id;
 
 	for (size_t i = 0; i < pending_downloads.size(); ++i) {
 		abort.check();
@@ -618,6 +668,16 @@ prefetch_for_library_items(metadb_handle_list_cref items,
 
 		pfc::string8 local_path;
 		pfc::string8 mime_type;
+		auto &credentials = credentials_by_server_id[std::string(
+			pending_downloads[i].server_id.c_str())];
+		if (!credentials.is_configured()) {
+			if (!subsonic::config::try_get_server_credentials(
+					pending_downloads[i].server_id, credentials) ||
+				!credentials.is_configured()) {
+				continue;
+			}
+		}
+
 		if (download_artwork_to_cache(pending_downloads[i], credentials,
 									  local_path, mime_type, abort)) {
 			++result.downloaded_count;

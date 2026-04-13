@@ -6,7 +6,13 @@
 
 namespace subsonic::config {
 
+[[nodiscard]] server_settings load_server_settings();
+void save_server_settings(const server_settings &settings);
+
 [[nodiscard]] server_credentials load_server_credentials();
+[[nodiscard]] bool try_get_server_credentials(const char *server_id,
+											  server_credentials &out);
+[[nodiscard]] pfc::string8 load_selected_server_id();
 void save_server_credentials(const server_credentials &credentials);
 
 [[nodiscard]] pfc::string8 component_profile_directory();
