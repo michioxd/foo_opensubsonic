@@ -73,6 +73,27 @@ jobs:
             $x.Save($filePath)
           }
 
+      - name: Install ATL components
+        shell: pwsh
+        run: |
+          $vswhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\Installer\vswhere.exe"
+          $vsInstaller = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\Installer\vs_installer.exe"
+          $installPath = & $vswhere -latest -products * -requires Microsoft.Component.MSBuild -property installationPath
+
+          if (-not $installPath) {
+            throw "Visual Studio installation path not found"
+          }
+
+          & $vsInstaller modify `
+            --installPath "$installPath" `
+            --add Microsoft.VisualStudio.Component.VC.ATL `
+            --add Microsoft.VisualStudio.Component.VC.ATL.ARM64 `
+            --quiet --norestart --wait
+
+          if ($LASTEXITCODE -ne 0) {
+            throw "Visual Studio component installation failed with exit code $LASTEXITCODE"
+          }
+
       - name: Setup devcmd
         uses: ilammy/msvc-dev-cmd@v1
 
