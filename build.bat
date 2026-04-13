@@ -10,9 +10,9 @@ set "DIST_DIR=%ROOT_DIR%dist"
 set "STAGE_DIR=%DIST_DIR%\foo_opensubsonic"
 set "PACKAGE_NAME=foo_opensubsonic.fb2k-component"
 set "PACKAGE_PATH=%DIST_DIR%\%PACKAGE_NAME%"
-set "X86_DLL=%ROOT_DIR%Release\foo_opensubsonic.dll"
-set "X64_DLL=%ROOT_DIR%x64\Release\foo_opensubsonic.dll"
-set "ARM64EC_DLL=%ROOT_DIR%ARM64EC\Release\foo_opensubsonic.dll"
+set "X86_DLL=%ROOT_DIR%\src\Release\foo_opensubsonic.dll"
+set "X64_DLL=%ROOT_DIR%\src\x64\Release\foo_opensubsonic.dll"
+set "ARM64EC_DLL=%ROOT_DIR%\src\ARM64EC\Release\foo_opensubsonic.dll"
 
 where msbuild >nul 2>nul
 if errorlevel 1 (
