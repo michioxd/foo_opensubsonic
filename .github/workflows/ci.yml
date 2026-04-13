@@ -62,6 +62,9 @@ jobs:
             $x.Save($filePath)
           }
 
+          cat lib\foobar2000_sdk\libPPUI\libPPUI.vcxproj
+          cat lib\foobar2000_sdk\foobar2000\helpers\foobar2000_sdk_helpers.vcxproj
+
       - name: Setup devcmd
         uses: ilammy/msvc-dev-cmd@v1
 
