@@ -43,18 +43,16 @@ jobs:
       - name: Patch SDK
         shell: pwsh
         run: |
-          $ns = @{msb="http://schemas.microsoft.com/developer/msbuild/2003"}
-
           $map = @{
             "lib\foobar2000_sdk\libPPUI\libPPUI.vcxproj" = "../..;..;..\..\wtl\Include"
-            "lib\foobar2000_sdk\foobar2000\helpers\foobar2000_sdk_helpers.vcxproj" = "..\..\..\wtl\Include"
+            "lib\foobar2000_sdk\foobar2000\helpers\foobar2000_sdk_helpers.vcxproj" = "..;..\..;..\..\..\wtl\Include"
           }
 
           foreach ($f in $map.Keys) {
             [xml]$x = Get-Content $f
-            $x.SelectNodes("//msb:AdditionalIncludeDirectories", $ns) | % {
-              $_.InnerText = $map[$f]
-            }
+            $ns = New-Object System.Xml.XmlNamespaceManager($x.NameTable)
+            $ns.AddNamespace("msb", "http://schemas.microsoft.com/developer/msbuild/2003")
+            $x.SelectNodes("//msb:ClCompile/msb:AdditionalIncludeDirectories", $ns) | % { $_.InnerText = $map[$f] }
             $x.Save($f)
           }
 
