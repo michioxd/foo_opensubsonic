@@ -65,6 +65,66 @@ enum class ensure_artwork_cached_result {
 	return "img";
 }
 
+[[nodiscard]] std::string normalize_mime_type(const char *mime_type) {
+	if (mime_type == nullptr || *mime_type == '\0') {
+		return {};
+	}
+
+	std::string mime = mime_type;
+	const auto semicolon = mime.find(';');
+	if (semicolon != std::string::npos) {
+		mime.erase(semicolon);
+	}
+
+	for (char &ch : mime) {
+		ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+	}
+
+	return mime;
+}
+
+[[nodiscard]] bool is_image_mime_type(const char *mime_type) {
+	const auto mime = normalize_mime_type(mime_type);
+	return !mime.empty() && mime.rfind("image/", 0) == 0;
+}
+
+[[nodiscard]] bool payload_looks_like_json(const void *data,
+										   t_size size) noexcept {
+	if (data == nullptr || size == 0) {
+		return false;
+	}
+
+	const auto *bytes = static_cast<const unsigned char *>(data);
+	t_size i = 0;
+
+	if (size >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF) {
+		i = 3;
+	}
+
+	for (; i < size; ++i) {
+		const unsigned char ch = bytes[i];
+		if (!std::isspace(ch)) {
+			return ch == '{' || ch == '[';
+		}
+	}
+
+	return false;
+}
+
+[[nodiscard]] bool should_accept_artwork_payload(const pfc::string8 &mime_type,
+												 const void *data,
+												 t_size size) {
+	if (is_image_mime_type(mime_type.c_str())) {
+		return true;
+	}
+
+	if (!mime_type.is_empty()) {
+		return false;
+	}
+
+	return !payload_looks_like_json(data, size);
+}
+
 [[nodiscard]] pfc::string8
 make_artwork_cache_path_from_hash(const char *content_hash,
 								  const char *mime_type) {
@@ -189,6 +249,17 @@ ensure_artwork_cached(const subsonic::cached_track_metadata &track_meta,
 											 mime_type);
 	}
 
+	if (!should_accept_artwork_payload(
+			mime_type, bytes.get_ptr(),
+			pfc::downcast_guarded<t_size>(bytes.get_size()))) {
+		subsonic::log_error(
+			"artwork",
+			(PFC_string_formatter()
+			 << "ignoring non-image artwork response for cover art id "
+			 << track_meta.cover_art_id));
+		return ensure_artwork_cached_result::unavailable;
+	}
+
 	const auto content_hash = hash_artwork_bytes(
 		bytes.get_ptr(), pfc::downcast_guarded<t_size>(bytes.get_size()));
 	auto local_path = make_artwork_cache_path_from_hash(content_hash.c_str(),
@@ -262,6 +333,17 @@ download_artwork_to_cache(const subsonic::cached_track_metadata &track_meta,
 	if (mime_type.is_empty()) {
 		(void)subsonic::http::try_get_header(response, "content-type",
 											 mime_type);
+	}
+
+	if (!should_accept_artwork_payload(
+			mime_type, bytes.get_ptr(),
+			pfc::downcast_guarded<t_size>(bytes.get_size()))) {
+		subsonic::log_error(
+			"artwork",
+			(PFC_string_formatter()
+			 << "ignoring non-image artwork response for cover art id "
+			 << track_meta.cover_art_id));
+		return false;
 	}
 
 	const auto content_hash = hash_artwork_bytes(
