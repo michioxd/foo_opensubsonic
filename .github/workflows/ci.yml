@@ -17,9 +17,9 @@ jobs:
       FBSDK_VERSION: 2025-03-07
 
       SOL_FILE: foo_opensubsonic.sln
-      MSBUILD_CMD_X86: /maxcpucount /p:RestorePackagesConfig=true /p:Configuration=Release /p:Platform=Win32 /t:restore,build
-      MSBUILD_CMD_X64: /maxcpucount /p:RestorePackagesConfig=true /p:Configuration=Release /p:Platform=x64 /t:restore,build
-      MSBUILD_CMD_ARM64EC: /maxcpucount /p:RestorePackagesConfig=true /p:Configuration=Release /p:Platform=ARM64EC /t:restore,build
+      MSBUILD_CMD_X86: /maxcpucount /property:RestorePackagesConfig=true,Configuration=Release,Platform=Win32,UseOfAtl=Static /target:restore,build
+      MSBUILD_CMD_X64: /maxcpucount /property:RestorePackagesConfig=true,Configuration=Release,Platform=x64,UseOfAtl=Static /target:restore,build
+      MSBUILD_CMD_ARM64EC: /maxcpucount /property:RestorePackagesConfig=true,Configuration=Release,Platform=ARM64EC,UseOfAtl=Static /target:restore,build
 
     steps:
       - name: Checkout repository
@@ -40,22 +40,38 @@ jobs:
 
           dir lib
 
-      - name: Inject Global MSBuild Properties (ATL & WTL)
+      - name: Patch SDK
         shell: pwsh
         run: |
-          $targets = @'
-          <Project>
-            <PropertyGroup>
-              <UseOfAtl>Static</UseOfAtl>
-            </PropertyGroup>
-            <ItemDefinitionGroup>
-              <ClCompile>
-                <AdditionalIncludeDirectories>$(MSBuildThisFileDirectory)lib\wtl\Include;$(VC_ATLMFC_IncludePath);%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
-              </ClCompile>
-            </ItemDefinitionGroup>
-          </Project>
-          '@
-          Set-Content -Path "Directory.Build.targets" -Value $targets -Encoding utf8
+          $projectPatches = @{
+            "lib\foobar2000_sdk\libPPUI\libPPUI.vcxproj" = "../..;..;..\..\wtl\Include;%(AdditionalIncludeDirectories)"
+            "lib\foobar2000_sdk\foobar2000\helpers\foobar2000_sdk_helpers.vcxproj" = "..;..\..;..\..\..\wtl\Include;%(AdditionalIncludeDirectories)"
+          }
+
+          foreach ($project in $projectPatches.GetEnumerator()) {
+            $filePath = Resolve-Path $project.Key
+
+            [xml]$x = Get-Content $filePath
+            $ns = New-Object System.Xml.XmlNamespaceManager($x.NameTable)
+            $ns.AddNamespace("msb", "http://schemas.microsoft.com/developer/msbuild/2003")
+            $msbuildNs = $ns.LookupNamespace("msb")
+
+            $x.SelectNodes("//msb:ClCompile/msb:AdditionalIncludeDirectories", $ns) | ForEach-Object {
+              $_.InnerText = $project.Value
+            }
+
+            $x.SelectNodes("//msb:PropertyGroup[@Label='Configuration']", $ns) | ForEach-Object {
+              $useOfAtl = $_.SelectSingleNode("msb:UseOfAtl", $ns)
+              if ($null -eq $useOfAtl) {
+                $useOfAtl = $x.CreateElement("UseOfAtl", $msbuildNs)
+                [void]$_.AppendChild($useOfAtl)
+              }
+
+              $useOfAtl.InnerText = "Static"
+            }
+
+            $x.Save($filePath)
+          }
 
       - name: Setup devcmd
         uses: ilammy/msvc-dev-cmd@v1
