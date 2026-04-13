@@ -30,12 +30,6 @@ jobs:
           (New-Object System.Net.WebClient).DownloadFile("https://www.foobar2000.org/files/SDK-${{ env.FBSDK_VERSION }}.7z", "${{ runner.temp }}\fbsdk.7z")
           7z x "${{ runner.temp }}\fbsdk.7z" -o"lib\foobar2000_sdk" > nul
 
-      - name: Patch SDK
-        run: |
-          (Get-Content "lib\foobar2000_sdk\foobar2000\helpers\foobar2000_sdk_helpers.vcxproj") `
-            | ForEach-Object { $_ -replace '\.\.\\packages\\wtl', '..\..\..\..\wtl' } `
-            | Set-Content "lib\foobar2000_sdk\foobar2000\helpers\foobar2000_sdk_helpers.vcxproj"
-
       - name: Download WTL and nlohmann/json
         run: |
           git clone https://git.code.sf.net/p/wtl/git lib\wtl
@@ -43,6 +37,26 @@ jobs:
           New-Item -ItemType Directory -Force -Path "lib\nlohmann"
           (New-Object System.Net.WebClient).DownloadFile("https://github.com/nlohmann/json/releases/download/v3.12.0/json.hpp", "lib\nlohmann\json.hpp")
           (New-Object System.Net.WebClient).DownloadFile("https://github.com/nlohmann/json/releases/download/v3.12.0/json_fwd.hpp", "lib\nlohmann\json_fwd.hpp")
+
+          dir lib
+
+      - name: Patch SDK
+        shell: pwsh
+        run: |
+          $ns = @{msb="http://schemas.microsoft.com/developer/msbuild/2003"}
+
+          $map = @{
+            "lib\foobar2000_sdk\libPPUI.vcxproj" = "../..;..;..\..\wtl\Include"
+            "lib\foobar2000_sdk\foobar2000\helpers\foobar2000_sdk_helpers.vcxproj" = "..\..\..\wtl\Include"
+          }
+
+          foreach ($f in $map.Keys) {
+            [xml]$x = Get-Content $f
+            $x.SelectNodes("//msb:AdditionalIncludeDirectories", $ns) | % {
+              $_.InnerText = $map[$f]
+            }
+            $x.Save($f)
+          }
 
       - name: Setup devcmd
         uses: ilammy/msvc-dev-cmd@v1
