@@ -17,9 +17,9 @@ jobs:
       FBSDK_VERSION: 2025-03-07
 
       SOL_FILE: foo_opensubsonic.sln
-      MSBUILD_CMD_X86: /maxcpucount /property:RestorePackagesConfig=true,Configuration=Release,Platform=Win32 /target:restore,build
-      MSBUILD_CMD_X64: /maxcpucount /property:RestorePackagesConfig=true,Configuration=Release,Platform=x64   /target:restore,build
-      MSBUILD_CMD_ARM64EC: /maxcpucount /property:RestorePackagesConfig=true,Configuration=Release,Platform=ARM64EC /target:restore,build
+      MSBUILD_CMD_X86: /maxcpucount /property:RestorePackagesConfig=true,Configuration=Release,Platform=Win32,UseOfAtl=Static /target:restore,build
+      MSBUILD_CMD_X64: /maxcpucount /property:RestorePackagesConfig=true,Configuration=Release,Platform=x64,UseOfAtl=Static /target:restore,build
+      MSBUILD_CMD_ARM64EC: /maxcpucount /property:RestorePackagesConfig=true,Configuration=Release,Platform=ARM64EC,UseOfAtl=Static /target:restore,build
 
     steps:
       - name: Checkout repository
@@ -61,9 +61,6 @@ jobs:
             
             $x.Save($filePath)
           }
-
-          cat lib\foobar2000_sdk\libPPUI\libPPUI.vcxproj
-          cat lib\foobar2000_sdk\foobar2000\helpers\foobar2000_sdk_helpers.vcxproj
 
       - name: Setup devcmd
         uses: ilammy/msvc-dev-cmd@v1
