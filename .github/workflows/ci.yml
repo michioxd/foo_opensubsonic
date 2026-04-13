@@ -46,7 +46,7 @@ jobs:
           $ns = @{msb="http://schemas.microsoft.com/developer/msbuild/2003"}
 
           $map = @{
-            "lib\foobar2000_sdk\libPPUI.vcxproj" = "../..;..;..\..\wtl\Include"
+            "lib\foobar2000_sdk\libPPUI\libPPUI.vcxproj" = "../..;..;..\..\wtl\Include"
             "lib\foobar2000_sdk\foobar2000\helpers\foobar2000_sdk_helpers.vcxproj" = "..\..\..\wtl\Include"
           }
 
