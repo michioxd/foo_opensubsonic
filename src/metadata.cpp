@@ -2,6 +2,7 @@
 
 #include "cache.h"
 #include "metadata.h"
+#include "metadata_utils.h"
 
 #include "utils.h"
 
@@ -11,7 +12,6 @@
 #include <SDK/threaded_process.h>
 #include <SDK/threadsLite.h>
 #include <SDK/titleformat.h>
-
 
 #include <unordered_set>
 
@@ -45,141 +45,6 @@ track_metadata_map g_track_metadata;
 	return track_id != nullptr ? std::string(track_id) : std::string();
 }
 
-[[nodiscard]] pfc::string8 make_extra_info_key(const char *raw_key) {
-	std::string key = "foo_opensubsonic_";
-	if (raw_key != nullptr) {
-		const char *cursor = raw_key;
-		while (*cursor != '\0') {
-			const unsigned char ch = static_cast<unsigned char>(*cursor);
-			if (std::isalnum(ch) != 0) {
-				key.push_back(static_cast<char>(std::tolower(ch)));
-			} else {
-				key.push_back('_');
-			}
-			++cursor;
-		}
-	}
-	return key.c_str();
-}
-
-[[nodiscard]] bool
-try_get_extra_field(const subsonic::cached_track_metadata &entry,
-					const char *field_name, pfc::string8 &out_value) {
-	out_value.reset();
-	if (field_name == nullptr || *field_name == '\0') {
-		return false;
-	}
-
-	for (const auto &field : entry.extra_fields) {
-		if (!field.is_valid()) {
-			continue;
-		}
-
-		if (pfc::stricmp_ascii(field.key, field_name) == 0) {
-			out_value = field.value;
-			return true;
-		}
-	}
-
-	return false;
-}
-
-[[nodiscard]] bool
-try_get_first_extra_field(const subsonic::cached_track_metadata &entry,
-						  std::initializer_list<const char *> field_names,
-						  pfc::string8 &out_value) {
-	out_value.reset();
-
-	for (const auto *field_name : field_names) {
-		if (try_get_extra_field(entry, field_name, out_value) &&
-			!out_value.is_empty()) {
-			return true;
-		}
-	}
-
-	return false;
-}
-
-void try_set_meta_from_extra(file_info_impl &info,
-							 const subsonic::cached_track_metadata &entry,
-							 const char *meta_name, const char *field_name) {
-	pfc::string8 value;
-	if (!info.meta_exists(meta_name) &&
-		try_get_extra_field(entry, field_name, value) && !value.is_empty()) {
-		info.meta_set(meta_name, value);
-	}
-}
-
-void try_set_meta_from_extra(file_info_impl &info,
-							 const subsonic::cached_track_metadata &entry,
-							 const char *meta_name,
-							 std::initializer_list<const char *> field_names) {
-	pfc::string8 value;
-	if (!info.meta_exists(meta_name) &&
-		try_get_first_extra_field(entry, field_names, value) &&
-		!value.is_empty()) {
-		info.meta_set(meta_name, value);
-	}
-}
-
-void try_set_info_from_extra(file_info_impl &info,
-							 const subsonic::cached_track_metadata &entry,
-							 const char *info_name,
-							 std::initializer_list<const char *> field_names) {
-	pfc::string8 value;
-	if (try_get_first_extra_field(entry, field_names, value) &&
-		!value.is_empty()) {
-		info.info_set(info_name, value);
-	}
-}
-
-[[nodiscard]] pfc::string8
-try_extract_year_from_created(const subsonic::cached_track_metadata &entry) {
-	pfc::string8 created;
-	if (!try_get_first_extra_field(entry, {"created", "createdAt", "date"},
-								   created) ||
-		created.length() < 4) {
-		return {};
-	}
-
-	const char *text = created.c_str();
-	if (std::isdigit(static_cast<unsigned char>(text[0])) == 0 ||
-		std::isdigit(static_cast<unsigned char>(text[1])) == 0 ||
-		std::isdigit(static_cast<unsigned char>(text[2])) == 0 ||
-		std::isdigit(static_cast<unsigned char>(text[3])) == 0) {
-		return {};
-	}
-
-	pfc::string8 year;
-	year.add_string(text, 4);
-	return year;
-}
-
-[[nodiscard]] pfc::string8
-guess_codec(const subsonic::cached_track_metadata &entry) {
-	std::string codec;
-
-	if (!entry.suffix.is_empty()) {
-		codec = entry.suffix.c_str();
-	} else if (!entry.stream_mime_type.is_empty()) {
-		codec = entry.stream_mime_type.c_str();
-		const auto semicolon = codec.find(';');
-		if (semicolon != std::string::npos) {
-			codec.erase(semicolon);
-		}
-		const auto slash = codec.rfind('/');
-		if (slash != std::string::npos && slash + 1 < codec.size()) {
-			codec.erase(0, slash + 1);
-		}
-	}
-
-	for (char &c : codec) {
-		c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
-	}
-
-	return codec.c_str();
-}
-
 void populate_file_info(const subsonic::cached_track_metadata &entry,
 						file_info_impl &info) {
 	info = file_info_impl();
@@ -202,60 +67,93 @@ void populate_file_info(const subsonic::cached_track_metadata &entry,
 		info.meta_set("genre", entry.genre);
 
 	if (!info.meta_exists("date")) {
-		const auto inferred_year = try_extract_year_from_created(entry);
+		const auto inferred_year =
+			subsonic::metadata_utils::try_extract_year_from_created(entry);
 		if (!inferred_year.is_empty()) {
 			info.meta_set("date", inferred_year);
 		}
 	}
 
-	try_set_meta_from_extra(info, entry, "album artist",
-							{"albumArtist", "albumartist", "displayArtist"});
-	try_set_meta_from_extra(info, entry, "composer",
-							{"composer", "displayComposer"});
-	try_set_meta_from_extra(info, entry, "lyricist", {"lyricist"});
-	try_set_meta_from_extra(info, entry, "conductor", {"conductor"});
-	try_set_meta_from_extra(info, entry, "performer",
-							{"performer", "performers"});
-	try_set_meta_from_extra(info, entry, "comment", {"comment"});
-	try_set_meta_from_extra(info, entry, "lyrics", {"lyrics"});
-	try_set_meta_from_extra(info, entry, "publisher", {"publisher", "label"});
-	try_set_meta_from_extra(info, entry, "label", {"label"});
-	try_set_meta_from_extra(info, entry, "copyright", {"copyright"});
-	try_set_meta_from_extra(info, entry, "isrc", {"isrc"});
-	try_set_meta_from_extra(info, entry, "catalognumber",
-							{"catalogNumber", "catalog_number"});
-	try_set_meta_from_extra(info, entry, "barcode", {"barcode"});
-	try_set_meta_from_extra(info, entry, "asin", {"asin"});
-	try_set_meta_from_extra(info, entry, "language", {"language"});
-	try_set_meta_from_extra(info, entry, "bpm", {"bpm"});
-	try_set_meta_from_extra(info, entry, "grouping", {"grouping", "work"});
-	try_set_meta_from_extra(info, entry, "subtitle", {"subtitle"});
-	try_set_meta_from_extra(info, entry, "discsubtitle",
-							{"discSubtitle", "discsubtitle"});
-	try_set_meta_from_extra(info, entry, "remixer", {"remixer", "mixArtist"});
-	try_set_meta_from_extra(info, entry, "producer", {"producer"});
-	try_set_meta_from_extra(info, entry, "engineer", {"engineer"});
-	try_set_meta_from_extra(info, entry, "arranger", {"arranger"});
-	try_set_meta_from_extra(info, entry, "compilation",
-							{"compilation", "isCompilation"});
-	try_set_meta_from_extra(info, entry, "totaltracks",
-							{"songCount", "trackCount", "totalTracks"});
-	try_set_meta_from_extra(info, entry, "totaldiscs",
-							{"discCount", "totalDiscs"});
-	try_set_meta_from_extra(info, entry, "musicbrainz_trackid",
-							{"musicBrainzId", "musicBrainzTrackId"});
-	try_set_meta_from_extra(info, entry, "musicbrainz_albumid",
-							{"musicBrainzAlbumId", "albumMusicBrainzId"});
-	try_set_meta_from_extra(info, entry, "musicbrainz_artistid",
-							{"musicBrainzArtistId", "artistMusicBrainzId"});
-	try_set_meta_from_extra(info, entry, "musicbrainz_albumartistid",
-							{"musicBrainzAlbumArtistId"});
-	try_set_meta_from_extra(info, entry, "original artist", {"originalArtist"});
-	try_set_meta_from_extra(info, entry, "original album", {"originalAlbum"});
-	try_set_meta_from_extra(info, entry, "originaldate",
-							{"originalDate", "originalYear"});
+	if (!info.meta_exists("album artist")) {
+		pfc::string8 album_artist;
+		if ((subsonic::metadata_utils::try_get_first_extra_field(
+				 entry, {"displayAlbumArtist", "albumArtist", "albumartist"},
+				 album_artist) ||
+			 subsonic::metadata_utils::try_join_named_array_extra_field(
+				 entry, {"albumArtists", "albumartists"}, album_artist)) &&
+			!album_artist.is_empty()) {
+			info.meta_set("album artist", album_artist);
+		}
+	}
+	subsonic::metadata_utils::try_set_meta_from_extra(
+		info, entry, "composer", {"composer", "displayComposer"});
+	subsonic::metadata_utils::try_set_meta_from_extra(info, entry, "lyricist",
+													  {"lyricist"});
+	subsonic::metadata_utils::try_set_meta_from_extra(info, entry, "conductor",
+													  {"conductor"});
+	subsonic::metadata_utils::try_set_meta_from_extra(
+		info, entry, "performer", {"performer", "performers"});
+	subsonic::metadata_utils::try_set_meta_from_extra(info, entry, "comment",
+													  {"comment"});
+	subsonic::metadata_utils::try_set_meta_from_extra(info, entry, "lyrics",
+													  {"lyrics"});
+	subsonic::metadata_utils::try_set_meta_from_extra(info, entry, "publisher",
+													  {"publisher", "label"});
+	subsonic::metadata_utils::try_set_meta_from_extra(info, entry, "label",
+													  {"label"});
+	subsonic::metadata_utils::try_set_meta_from_extra(info, entry, "copyright",
+													  {"copyright"});
+	subsonic::metadata_utils::try_set_meta_from_extra(info, entry, "isrc",
+													  {"isrc"});
+	subsonic::metadata_utils::try_set_meta_from_extra(
+		info, entry, "catalognumber", {"catalogNumber", "catalog_number"});
+	subsonic::metadata_utils::try_set_meta_from_extra(info, entry, "barcode",
+													  {"barcode"});
+	subsonic::metadata_utils::try_set_meta_from_extra(info, entry, "asin",
+													  {"asin"});
+	subsonic::metadata_utils::try_set_meta_from_extra(info, entry, "language",
+													  {"language"});
+	subsonic::metadata_utils::try_set_meta_from_extra(info, entry, "bpm",
+													  {"bpm"});
+	subsonic::metadata_utils::try_set_meta_from_extra(info, entry, "grouping",
+													  {"grouping", "work"});
+	subsonic::metadata_utils::try_set_meta_from_extra(info, entry, "subtitle",
+													  {"subtitle"});
+	subsonic::metadata_utils::try_set_meta_from_extra(
+		info, entry, "discsubtitle", {"discSubtitle", "discsubtitle"});
+	subsonic::metadata_utils::try_set_meta_from_extra(info, entry, "remixer",
+													  {"remixer", "mixArtist"});
+	subsonic::metadata_utils::try_set_meta_from_extra(info, entry, "producer",
+													  {"producer"});
+	subsonic::metadata_utils::try_set_meta_from_extra(info, entry, "engineer",
+													  {"engineer"});
+	subsonic::metadata_utils::try_set_meta_from_extra(info, entry, "arranger",
+													  {"arranger"});
+	subsonic::metadata_utils::try_set_meta_from_extra(
+		info, entry, "compilation", {"compilation", "isCompilation"});
+	subsonic::metadata_utils::try_set_meta_from_extra(
+		info, entry, "totaltracks", {"songCount", "trackCount", "totalTracks"});
+	subsonic::metadata_utils::try_set_meta_from_extra(
+		info, entry, "totaldiscs", {"discCount", "totalDiscs"});
+	subsonic::metadata_utils::try_set_meta_from_extra(
+		info, entry, "musicbrainz_trackid",
+		{"musicBrainzId", "musicBrainzTrackId"});
+	subsonic::metadata_utils::try_set_meta_from_extra(
+		info, entry, "musicbrainz_albumid",
+		{"musicBrainzAlbumId", "albumMusicBrainzId"});
+	subsonic::metadata_utils::try_set_meta_from_extra(
+		info, entry, "musicbrainz_artistid",
+		{"musicBrainzArtistId", "artistMusicBrainzId"});
+	subsonic::metadata_utils::try_set_meta_from_extra(
+		info, entry, "musicbrainz_albumartistid", {"musicBrainzAlbumArtistId"});
+	subsonic::metadata_utils::try_set_meta_from_extra(
+		info, entry, "original artist", {"originalArtist"});
+	subsonic::metadata_utils::try_set_meta_from_extra(
+		info, entry, "original album", {"originalAlbum"});
+	subsonic::metadata_utils::try_set_meta_from_extra(
+		info, entry, "originaldate", {"originalDate", "originalYear"});
 
-	const auto codec = guess_codec(entry);
+	const auto codec = subsonic::metadata_utils::guess_codec(entry);
 	if (!codec.is_empty()) {
 		info.info_set("codec", codec);
 	}
@@ -269,37 +167,85 @@ void populate_file_info(const subsonic::cached_track_metadata &entry,
 	if (!entry.track_id.is_empty())
 		info.info_set("subsonic_track_id", entry.track_id);
 
-	try_set_info_from_extra(info, entry, "encoding",
-							{"suffix", "transcodedSuffix"});
-	try_set_info_from_extra(info, entry, "samplerate",
-							{"samplingRate", "sampleRate"});
-	try_set_info_from_extra(info, entry, "channels",
-							{"channelCount", "channels"});
-	try_set_info_from_extra(info, entry, "bitspersample",
-							{"bitsPerSample", "bitDepth"});
-	try_set_info_from_extra(info, entry, "filesize", {"size", "contentLength"});
-	try_set_info_from_extra(info, entry, "subsonic_album_id", {"albumId"});
-	try_set_info_from_extra(info, entry, "subsonic_artist_id", {"artistId"});
-	try_set_info_from_extra(info, entry, "subsonic_parent_id", {"parent"});
-	try_set_info_from_extra(info, entry, "subsonic_media_type", {"type"});
-	try_set_info_from_extra(info, entry, "subsonic_created", {"created"});
-	try_set_info_from_extra(info, entry, "subsonic_path", {"path"});
-	try_set_info_from_extra(info, entry, "subsonic_play_count", {"playCount"});
-	try_set_info_from_extra(info, entry, "subsonic_user_rating",
-							{"userRating"});
-	try_set_info_from_extra(info, entry, "subsonic_average_rating",
-							{"averageRating"});
-	try_set_info_from_extra(info, entry, "subsonic_starred", {"starred"});
-	try_set_info_from_extra(info, entry, "subsonic_is_video", {"isVideo"});
-	try_set_info_from_extra(info, entry, "subsonic_explicit_status",
-							{"explicitStatus"});
+	subsonic::metadata_utils::try_set_info_from_extra(
+		info, entry, "encoding", {"suffix", "transcodedSuffix"});
+	subsonic::metadata_utils::try_set_info_from_extra(
+		info, entry, "samplerate", {"samplingRate", "sampleRate"});
+	subsonic::metadata_utils::try_set_info_from_extra(
+		info, entry, "channels", {"channelCount", "channels"});
+	subsonic::metadata_utils::try_set_info_from_extra(
+		info, entry, "bitspersample", {"bitsPerSample", "bitDepth"});
+	subsonic::metadata_utils::try_set_info_from_extra(
+		info, entry, "filesize", {"size", "contentLength"});
+	subsonic::metadata_utils::try_set_info_from_extra(
+		info, entry, "subsonic_album_id", {"albumId"});
+	subsonic::metadata_utils::try_set_info_from_extra(
+		info, entry, "subsonic_artist_id", {"artistId"});
+	subsonic::metadata_utils::try_set_info_from_extra(
+		info, entry, "subsonic_parent_id", {"parent"});
+	subsonic::metadata_utils::try_set_info_from_extra(
+		info, entry, "subsonic_media_type", {"type"});
+	subsonic::metadata_utils::try_set_info_from_extra(
+		info, entry, "subsonic_created", {"created"});
+	subsonic::metadata_utils::try_set_info_from_extra(
+		info, entry, "subsonic_path", {"path"});
+	subsonic::metadata_utils::try_set_info_from_extra(
+		info, entry, "subsonic_play_count", {"playCount"});
+	subsonic::metadata_utils::try_set_info_from_extra(
+		info, entry, "subsonic_user_rating", {"userRating"});
+	subsonic::metadata_utils::try_set_info_from_extra(
+		info, entry, "subsonic_average_rating", {"averageRating"});
+	subsonic::metadata_utils::try_set_info_from_extra(
+		info, entry, "subsonic_starred", {"starred"});
+	subsonic::metadata_utils::try_set_info_from_extra(
+		info, entry, "subsonic_is_video", {"isVideo"});
+	subsonic::metadata_utils::try_set_info_from_extra(
+		info, entry, "subsonic_explicit_status", {"explicitStatus"});
+
+	float replaygain_value = 0.0f;
+	if (subsonic::metadata_utils::try_get_replaygain_value(
+			entry,
+			{"replaygain_track_gain", "replayGainTrackGain",
+			 "replaygainTrackGain", "trackGain"},
+			"trackGain", replaygain_value)) {
+		info.info_set_replaygain_track_gain(replaygain_value);
+	}
+	if (subsonic::metadata_utils::try_get_replaygain_value(
+			entry,
+			{"replaygain_album_gain", "replayGainAlbumGain",
+			 "replaygainAlbumGain", "albumGain"},
+			"albumGain", replaygain_value)) {
+		info.info_set_replaygain_album_gain(replaygain_value);
+	}
+	if (subsonic::metadata_utils::try_get_replaygain_value(
+			entry,
+			{"replaygain_track_peak", "replayGainTrackPeak",
+			 "replaygainTrackPeak", "trackPeak"},
+			"trackPeak", replaygain_value)) {
+		info.info_set_replaygain_track_peak(replaygain_value);
+	}
+	if (subsonic::metadata_utils::try_get_replaygain_value(
+			entry,
+			{"replaygain_album_peak", "replayGainAlbumPeak",
+			 "replaygainAlbumPeak", "albumPeak"},
+			"albumPeak", replaygain_value)) {
+		info.info_set_replaygain_album_peak(replaygain_value);
+	}
+
+	const auto replaygain = info.get_replaygain();
+	replaygain.for_each([&info](const char *name, const char *value) {
+		if (name != nullptr && value != nullptr && *value != '\0') {
+			info.meta_set(name, value);
+		}
+	});
 
 	for (const auto &field : entry.extra_fields) {
 		if (!field.is_valid() || field.value.is_empty()) {
 			continue;
 		}
 
-		const auto key = make_extra_info_key(field.key);
+		const auto key =
+			subsonic::metadata_utils::make_extra_info_key(field.key);
 		info.info_set(key, field.value);
 	}
 }

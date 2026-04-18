@@ -5,9 +5,13 @@
 #include "config.h"
 #include "http.h"
 #include "metadata.h"
+#include "metadata_utils.h"
 #include "utils.h"
 
 #include <SDK/file.h>
+#include <SDK/file_info_impl.h>
+#include <SDK/input.h>
+#include <SDK/input_impl.h>
 #include <SDK/service_impl.h>
 
 namespace {
@@ -28,45 +32,6 @@ bool try_get_track_id(const char *path, pfc::string_base &out_track_id) {
 	return subsonic::extract_track_id_from_path(path, out_track_id);
 }
 
-[[nodiscard]] bool
-try_get_extra_field_value(const subsonic::cached_track_metadata &track,
-						  const char *field_name, pfc::string_base &out_value) {
-	out_value.reset();
-	if (field_name == nullptr || *field_name == '\0') {
-		return false;
-	}
-
-	for (const auto &field : track.extra_fields) {
-		if (!field.is_valid()) {
-			continue;
-		}
-
-		if (pfc::stricmp_ascii(field.key, field_name) == 0) {
-			out_value = field.value;
-			return true;
-		}
-	}
-
-	return false;
-}
-
-[[nodiscard]] bool try_parse_filesize(const char *text,
-									  t_filesize &out_value) noexcept {
-	out_value = filesize_invalid;
-	if (text == nullptr || *text == '\0') {
-		return false;
-	}
-
-	char *end_ptr = nullptr;
-	const auto parsed = std::strtoull(text, &end_ptr, 10);
-	if (end_ptr == text) {
-		return false;
-	}
-
-	out_value = static_cast<t_filesize>(parsed);
-	return true;
-}
-
 [[nodiscard]] t_filesize
 determine_total_size(const subsonic::http::response &response,
 					 abort_callback &abort) {
@@ -74,7 +39,8 @@ determine_total_size(const subsonic::http::response &response,
 	if (subsonic::http::try_get_header(response, "content-length",
 									   content_length)) {
 		t_filesize parsed = filesize_invalid;
-		if (try_parse_filesize(content_length, parsed)) {
+		if (subsonic::metadata_utils::try_parse_filesize(content_length,
+														 parsed)) {
 			return parsed;
 		}
 	}
@@ -104,115 +70,6 @@ open_download_response(const subsonic::server_credentials &credentials,
 	}
 
 	return response;
-}
-
-pfc::string8 guess_content_type_from_suffix(const char *suffix) {
-	if (suffix == nullptr || *suffix == '\0') {
-		return {};
-	}
-
-	if (subsonic::ends_with_ascii_nocase(suffix, "mp3")) {
-		return "audio/mpeg";
-	}
-	if (subsonic::ends_with_ascii_nocase(suffix, "flac")) {
-		return "audio/flac";
-	}
-	if (subsonic::ends_with_ascii_nocase(suffix, "ogg")) {
-		return "audio/ogg";
-	}
-	if (subsonic::ends_with_ascii_nocase(suffix, "opus")) {
-		return "audio/opus";
-	}
-	if (subsonic::ends_with_ascii_nocase(suffix, "m4a") ||
-		subsonic::ends_with_ascii_nocase(suffix, "mp4")) {
-		return "audio/mp4";
-	}
-	if (subsonic::ends_with_ascii_nocase(suffix, "aac")) {
-		return "audio/aac";
-	}
-	if (subsonic::ends_with_ascii_nocase(suffix, "wav")) {
-		return "audio/wav";
-	}
-	if (subsonic::ends_with_ascii_nocase(suffix, "wv")) {
-		return "audio/wavpack";
-	}
-	if (subsonic::ends_with_ascii_nocase(suffix, "ape")) {
-		return "audio/ape";
-	}
-
-	return {};
-}
-
-pfc::string8
-make_fallback_content_type(const subsonic::cached_track_metadata &track) {
-	if (!track.stream_mime_type.is_empty()) {
-		return track.stream_mime_type;
-	}
-	return guess_content_type_from_suffix(track.suffix);
-}
-
-pfc::string8
-make_display_name_from_metadata(const subsonic::cached_track_metadata &track) {
-	pfc::string8 out;
-
-	if (!track.artist.is_empty() && !track.title.is_empty()) {
-		out << track.artist << " - " << track.title;
-	} else if (!track.title.is_empty()) {
-		out = track.title;
-	} else if (!track.track_id.is_empty()) {
-		out = track.track_id;
-	}
-
-	if (!track.suffix.is_empty()) {
-		out << "." << track.suffix;
-	}
-
-	return out;
-}
-
-[[nodiscard]] t_filesize
-try_get_known_total_size(const subsonic::cached_track_metadata &track) {
-	pfc::string8 value;
-	if (try_get_extra_field_value(track, "size", value)) {
-		t_filesize parsed = filesize_invalid;
-		if (try_parse_filesize(value, parsed)) {
-			return parsed;
-		}
-	}
-
-	if (try_get_extra_field_value(track, "contentLength", value)) {
-		t_filesize parsed = filesize_invalid;
-		if (try_parse_filesize(value, parsed)) {
-			return parsed;
-		}
-	}
-
-	return filesize_invalid;
-}
-
-pfc::string8 make_display_name_for_path(const char *path) {
-	subsonic::cached_track_metadata track;
-	if (subsonic::metadata::try_get_track_metadata_for_path(path, track)) {
-		const auto value = make_display_name_from_metadata(track);
-		if (!value.is_empty()) {
-			return value;
-		}
-	}
-
-	pfc::string8 track_id;
-	if (try_get_track_id(path, track_id)) {
-		return track_id;
-	}
-
-	return path != nullptr ? pfc::string8(path) : pfc::string8();
-}
-
-void populate_path_stats(foobar2000_io::t_filestats2 &stats) {
-	stats.set_file(true);
-	stats.set_readonly(true);
-	stats.set_remote(true);
-	stats.m_size = filesize_invalid;
-	stats.m_timestamp = 3;
 }
 
 class subsonic_remote_file : public file_readonly_t<file_v2> {
@@ -295,7 +152,7 @@ class subsonic_remote_file : public file_readonly_t<file_v2> {
 
 	t_filestats2 get_stats2(uint32_t s2flags, abort_callback &abort) override {
 		auto stats = m_stream->get_stats2_(s2flags, abort);
-		populate_path_stats(stats);
+		subsonic::metadata_utils::populate_remote_path_stats(stats);
 		stats.m_size = m_total_size;
 		return stats;
 	}
@@ -358,6 +215,158 @@ class subsonic_remote_file : public file_readonly_t<file_v2> {
 	t_filesize m_position = 0;
 };
 
+class subsonic_input : public input_stubs {
+  public:
+	void open(service_ptr_t<file> p_filehint, const char *p_path,
+			  t_input_open_reason p_reason, abort_callback &p_abort) {
+		m_path = p_path;
+		m_file = p_filehint;
+
+		if (p_reason == input_open_info_write) {
+			throw exception_tagging_unsupported();
+		}
+
+		input_open_file_helper(m_file, p_path, p_reason, p_abort);
+
+		switch (p_reason) {
+		case input_open_info_read:
+			input_entry::g_open_for_info_read(m_reader, m_file, p_path, p_abort,
+											  true);
+			break;
+		case input_open_decode:
+			input_entry::g_open_for_decoding(m_decoder, m_file, p_path, p_abort,
+											 true);
+			m_reader = m_decoder;
+			break;
+		case input_open_info_write:
+		default:
+			throw exception_tagging_unsupported();
+		}
+	}
+
+	void get_info(file_info &p_info, abort_callback &p_abort) {
+		if (m_reader.is_empty()) {
+			throw exception_io_data();
+		}
+
+		m_reader->get_info(0, p_info, p_abort);
+		subsonic::metadata_utils::overlay_file_info_for_path(m_path, p_info);
+	}
+
+	t_filestats2 get_stats2(unsigned f, abort_callback &a) {
+		if (m_file.is_valid()) {
+			return m_file->get_stats2_(f, a);
+		}
+
+		t_filestats2 stats = filestats2_invalid;
+		subsonic::metadata_utils::populate_remote_path_stats(stats);
+		return stats;
+	}
+
+	void decode_initialize(unsigned p_flags, abort_callback &p_abort) {
+		if (m_decoder.is_empty()) {
+			throw exception_io_data();
+		}
+		m_decoder->initialize(0, p_flags, p_abort);
+	}
+
+	bool decode_run(audio_chunk &p_chunk, abort_callback &p_abort) {
+		if (m_decoder.is_empty()) {
+			throw exception_io_data();
+		}
+		return m_decoder->run(p_chunk, p_abort);
+	}
+
+	void decode_seek(double p_seconds, abort_callback &p_abort) {
+		if (m_decoder.is_empty()) {
+			throw exception_io_data();
+		}
+		m_decoder->seek(p_seconds, p_abort);
+	}
+
+	bool decode_can_seek() {
+		return m_decoder.is_valid() && m_decoder->can_seek();
+	}
+
+	bool decode_get_dynamic_info(file_info &p_out, double &p_timestamp_delta) {
+		if (m_decoder.is_empty()) {
+			return false;
+		}
+		return m_decoder->get_dynamic_info(p_out, p_timestamp_delta);
+	}
+
+	bool decode_get_dynamic_info_track(file_info &p_out,
+									   double &p_timestamp_delta) {
+		if (m_decoder.is_empty()) {
+			return false;
+		}
+
+		if (!m_decoder->get_dynamic_info_track(p_out, p_timestamp_delta)) {
+			return false;
+		}
+
+		subsonic::metadata_utils::overlay_file_info_for_path(m_path, p_out);
+		return true;
+	}
+
+	void decode_on_idle(abort_callback &p_abort) {
+		if (m_decoder.is_valid()) {
+			m_decoder->on_idle(p_abort);
+		} else if (m_file.is_valid()) {
+			m_file->on_idle(p_abort);
+		}
+	}
+
+	void retag(const file_info &p_info, abort_callback &p_abort) {
+		(void)p_info;
+		(void)p_abort;
+		throw exception_tagging_unsupported();
+	}
+
+	void remove_tags(abort_callback &) {
+		throw exception_tagging_unsupported();
+	}
+
+	static bool g_is_our_content_type(const char *p_content_type) {
+		(void)p_content_type;
+		return false;
+	}
+
+	static bool g_is_our_path(const char *p_path, const char *p_extension) {
+		(void)p_extension;
+		pfc::string8 track_id;
+		return try_get_track_id(p_path, track_id);
+	}
+
+	static const char *g_get_name() { return "OpenSubsonic virtual input"; }
+
+	static GUID g_get_guid() {
+		static const GUID guid = {
+			0x63862f8d,
+			0x9822,
+			0x47ee,
+			{0x8b, 0x2f, 0x8c, 0xa0, 0x69, 0x85, 0x75, 0x62}};
+		return guid;
+	}
+
+	static GUID g_get_preferences_guid() { return pfc::guid_null; }
+
+	static bool g_is_low_merit() { return false; }
+
+	static bool g_fallback_is_our_payload(const void *bytes, size_t bytesAvail,
+										  t_filesize bytesWhole) {
+		(void)bytes;
+		(void)bytesAvail;
+		(void)bytesWhole;
+		return false;
+	}
+
+	service_ptr_t<file> m_file;
+	service_ptr_t<input_info_reader> m_reader;
+	service_ptr_t<input_decoder> m_decoder;
+	pfc::string8 m_path;
+};
+
 class subsonic_filesystem_impl : public filesystem_v3 {
   public:
 	bool get_canonical_path(const char *path, pfc::string_base &out) override {
@@ -380,7 +389,7 @@ class subsonic_filesystem_impl : public filesystem_v3 {
 			return false;
 		}
 
-		out = make_display_name_for_path(path);
+		out = subsonic::metadata_utils::make_display_name_for_path(path);
 		return true;
 	}
 
@@ -413,9 +422,10 @@ class subsonic_filesystem_impl : public filesystem_v3 {
 		}
 
 		auto wrapped = fb2k::service_new<subsonic_remote_file>();
-		wrapped->initialize(credentials, track_id,
-							make_fallback_content_type(track),
-							try_get_known_total_size(track), abort);
+		wrapped->initialize(
+			credentials, track_id,
+			subsonic::metadata_utils::make_fallback_content_type(track),
+			subsonic::metadata_utils::try_get_known_total_size(track), abort);
 
 		file::ptr file_out = wrapped.get_ptr();
 		out = file_out;
@@ -500,7 +510,7 @@ class subsonic_filesystem_impl : public filesystem_v3 {
 
 	void extract_filename_ext(const char *path,
 							  pfc::string_base &out) override {
-		out = make_display_name_for_path(path);
+		out = subsonic::metadata_utils::make_display_name_for_path(path);
 	}
 
 	bool get_parent_path(const char *path, pfc::string_base &out) override {
@@ -532,10 +542,11 @@ class subsonic_filesystem_impl : public filesystem_v3 {
 		(void)s2flags;
 
 		t_filestats2 stats = filestats2_invalid;
-		populate_path_stats(stats);
+		subsonic::metadata_utils::populate_remote_path_stats(stats);
 		subsonic::cached_track_metadata track;
 		if (subsonic::metadata::try_get_track_metadata(track_id, track)) {
-			stats.m_size = try_get_known_total_size(track);
+			stats.m_size =
+				subsonic::metadata_utils::try_get_known_total_size(track);
 		}
 		return stats;
 	}
@@ -546,7 +557,7 @@ class subsonic_filesystem_impl : public filesystem_v3 {
 			return false;
 		}
 
-		out = make_display_name_for_path(path);
+		out = subsonic::metadata_utils::make_display_name_for_path(path);
 		return true;
 	}
 
@@ -562,5 +573,8 @@ class subsonic_filesystem_impl : public filesystem_v3 {
 
 static service_factory_single_t<subsonic_filesystem_impl>
 	g_subsonic_filesystem_impl_factory;
+
+static input_singletrack_factory_t<subsonic_input, input_entry::flag_redirect>
+	g_subsonic_input_factory;
 
 } // namespace
