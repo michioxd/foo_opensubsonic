@@ -5,10 +5,15 @@
 
 #include "utils.h"
 
+#include <SDK/core_api.h>
 #include <SDK/initquit.h>
 #include <SDK/metadb.h>
+#include <SDK/threaded_process.h>
 #include <SDK/threadsLite.h>
 #include <SDK/titleformat.h>
+
+
+#include <unordered_set>
 
 namespace {
 
@@ -318,6 +323,92 @@ void dispatch_refresh_for_handles(metadb_handle_list_cref handles) {
 		static_api_ptr_t<metadb_io>()->dispatch_refresh(handles_copy);
 	});
 }
+
+[[nodiscard]] service_ptr_t<metadb_hint_list_v3>
+try_get_hint_list_v3(const metadb_hint_list::ptr &hint_list) {
+	service_ptr_t<metadb_hint_list_v3> hint_list_v3;
+	if (hint_list.is_valid()) {
+		hint_list->service_query_t(hint_list_v3);
+	}
+	return hint_list_v3;
+}
+
+void add_hint_to_list(metadb_hint_list &hint_list,
+					  metadb_hint_list_v3 *hint_list_v3,
+					  const metadb_handle_ptr &handle,
+					  const file_info_impl &info, const t_filestats &stats) {
+	if (hint_list_v3 != nullptr) {
+		hint_list_v3->add_hint_forced(handle, info, stats, true);
+	} else {
+		hint_list.add_hint(handle, info, stats, true);
+	}
+}
+
+void finalize_hint_list(metadb_hint_list::ptr hint_list,
+						metadb_handle_list handles) {
+	handles.sort_by_pointer_remove_duplicates();
+	fb2k::inMainThreadSynchronous2([hint_list, handles] {
+		if (hint_list.is_valid()) {
+			hint_list->on_done();
+		}
+
+		if (handles.get_count() > 0) {
+			static_api_ptr_t<metadb_io>()->dispatch_refresh(handles);
+		}
+	});
+}
+
+void remove_info_for_handles(metadb_handle_list handles,
+							 threaded_process_status &status,
+							 abort_callback &abort) {
+	handles.sort_by_pointer_remove_duplicates();
+	if (handles.get_count() == 0) {
+		return;
+	}
+
+	service_ptr_t<threaded_process_callback> remove_task;
+	fb2k::inMainThreadSynchronous2([&] {
+		service_ptr_t<metadb_io_v4> api_v4;
+		static_api_ptr_t<metadb_io>()->service_query_t(api_v4);
+		if (api_v4.is_valid()) {
+			remove_task = api_v4->spawn_remove_info(
+				handles,
+				metadb_io_v2::op_flag_silent | metadb_io_v2::op_flag_no_errors,
+				nullptr);
+		}
+
+		if (remove_task.is_valid()) {
+			remove_task->on_init(threaded_process_context::g_default());
+		}
+	});
+
+	if (remove_task.is_valid()) {
+		try {
+			status.set_item("Removing OpenSubsonic metadata from database...");
+			remove_task->run(status, abort);
+			fb2k::inMainThreadSynchronous2([&] {
+				remove_task->on_done(threaded_process_context::g_default(),
+									 false);
+			});
+		} catch (...) {
+			fb2k::inMainThreadSynchronous2([&] {
+				remove_task->on_done(threaded_process_context::g_default(),
+									 std::current_exception() != nullptr);
+			});
+			throw;
+		}
+		return;
+	}
+
+	fb2k::inMainThreadSynchronous2([handles] {
+		auto api_v2 = metadb_io_v2::get();
+		api_v2->remove_info_async(handles, core_api::get_main_window(),
+								  metadb_io_v2::op_flag_silent |
+									  metadb_io_v2::op_flag_no_errors,
+								  nullptr);
+	});
+}
+
 void dispatch_refresh_for_track_ids(
 	const std::vector<subsonic::cached_track_metadata> &entries) {
 	metadb_handle_list handles;
@@ -596,7 +687,27 @@ void clear_all(threaded_process_status &status, abort_callback &abort) {
 	cache::replace_track_metadata({}, status, abort);
 
 	replace_snapshot_locked({});
-	dispatch_refresh_for_track_ids(entries);
+	metadb_handle_list handles;
+
+	for (size_t i = 0; i < entries.size(); ++i) {
+		if (i % 500 == 0) {
+			abort.check();
+			status.set_progress(i, entries.size());
+			status.set_item(PFC_string_formatter()
+							<< "Clearing OpenSubsonic metadata: " << i << " / "
+							<< entries.size());
+		}
+
+		const auto handle = make_handle_for_track(entries[i].track_id);
+		if (!handle.is_valid()) {
+			continue;
+		}
+
+		handles.add_item(handle);
+	}
+
+	status.set_progress(entries.size(), entries.size());
+	remove_info_for_handles(handles, status, abort);
 }
 
 void merge_track_metadata(const std::vector<cached_track_metadata> &entries,
@@ -623,6 +734,7 @@ void merge_track_metadata(const std::vector<cached_track_metadata> &entries,
 
 	auto api_v2 = metadb_io_v2::get();
 	auto hint_list = api_v2->create_hint_list();
+	auto hint_list_v3 = try_get_hint_list_v3(hint_list);
 	metadb_handle_list handles;
 
 	for (size_t i = 0; i < unique_entries.size(); ++i) {
@@ -646,20 +758,27 @@ void merge_track_metadata(const std::vector<cached_track_metadata> &entries,
 			t_filestats fake_stats;
 			fake_stats.m_size = filesize_invalid;
 			fake_stats.m_timestamp = 3;
-			hint_list->add_hint(handle, info, fake_stats, true);
+			add_hint_to_list(*hint_list, hint_list_v3.get_ptr(), handle, info,
+							 fake_stats);
 		}
 	}
 
 	status.set_item("Injecting metadata into database...");
-	hint_list->on_done();
-
-	handles.sort_by_pointer_remove_duplicates();
-	dispatch_refresh_for_handles(handles);
+	finalize_hint_list(hint_list, handles);
 }
 
 void replace_track_metadata(const std::vector<cached_track_metadata> &entries,
 							threaded_process_status &status,
 							abort_callback &abort) {
+	std::vector<cached_track_metadata> previous_entries;
+	{
+		std::shared_lock lock(g_track_metadata_mutex);
+		previous_entries.reserve(g_track_metadata.size());
+		for (const auto &item : g_track_metadata) {
+			previous_entries.push_back(item.second);
+		}
+	}
+
 	cache::replace_track_metadata(entries, status, abort);
 
 	status.set_item("Updating memory snapshot...");
@@ -667,7 +786,11 @@ void replace_track_metadata(const std::vector<cached_track_metadata> &entries,
 
 	auto api_v2 = metadb_io_v2::get();
 	auto hint_list = api_v2->create_hint_list();
+	auto hint_list_v3 = try_get_hint_list_v3(hint_list);
 	metadb_handle_list handles;
+	metadb_handle_list stale_handles;
+	std::unordered_set<std::string> next_track_ids;
+	next_track_ids.reserve(entries.size());
 
 	for (size_t i = 0; i < entries.size(); ++i) {
 		if (i % 500 == 0) {
@@ -681,6 +804,8 @@ void replace_track_metadata(const std::vector<cached_track_metadata> &entries,
 		if (!entry.is_valid())
 			continue;
 
+		next_track_ids.emplace(make_track_key(entry.track_id));
+
 		const auto handle = make_handle_for_track(entry.track_id);
 		if (handle.is_valid()) {
 			handles.add_item(handle);
@@ -690,16 +815,30 @@ void replace_track_metadata(const std::vector<cached_track_metadata> &entries,
 			t_filestats fake_stats;
 			fake_stats.m_size = filesize_invalid;
 			fake_stats.m_timestamp = 3;
-			hint_list->add_hint(handle, info, fake_stats, true);
+			add_hint_to_list(*hint_list, hint_list_v3.get_ptr(), handle, info,
+							 fake_stats);
+		}
+	}
+
+	for (const auto &entry : previous_entries) {
+		if (!entry.is_valid()) {
+			continue;
+		}
+
+		const auto key = make_track_key(entry.track_id);
+		if (key.empty() || next_track_ids.find(key) != next_track_ids.end()) {
+			continue;
+		}
+
+		const auto handle = make_handle_for_track(entry.track_id);
+		if (handle.is_valid()) {
+			stale_handles.add_item(handle);
 		}
 	}
 
 	status.set_item("Injecting metadata into database...");
-	hint_list->on_done();
-
-	status.set_item("Notifying user interface...");
-	handles.sort_by_pointer_remove_duplicates();
-	dispatch_refresh_for_handles(handles);
+	finalize_hint_list(hint_list, handles);
+	remove_info_for_handles(stale_handles, status, abort);
 }
 
 void remove_track_metadata(const char *track_id) {

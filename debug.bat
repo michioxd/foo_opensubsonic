@@ -17,7 +17,11 @@ if not exist "%appdata%\foobar2000-v2\user-components-x64\foo_opensubsonic\" (
     mkdir "%appdata%\foobar2000-v2\user-components-x64\foo_opensubsonic\"
 )
 
+taskkill /IM "foobar2000.exe" /F >nul 2>&1
+
 copy /Y ".\x64\Debug\foo_opensubsonic.dll" "%appdata%\foobar2000-v2\user-components-x64\foo_opensubsonic\foo_opensubsonic.dll"
+
+start "" "C:\Program Files\foobar2000\foobar2000.exe"
 
 echo.
 echo OK!

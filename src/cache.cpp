@@ -23,6 +23,16 @@ constexpr t_uint32 k_artwork_blob_version = 2;
 	return PFC_string_formatter() << domain << "." << subsonic::md5_hex(id);
 }
 
+void delete_file_if_exists(const char *path, abort_callback &abort) {
+	if (path == nullptr || *path == '\0') {
+		return;
+	}
+
+	if (filesystem::g_exists(path, abort)) {
+		filesystem::g_remove(path, abort);
+	}
+}
+
 void write_track_extra_fields(
 	stream_writer_formatter_simple<> &writer,
 	const std::vector<subsonic::track_metadata_field> &fields) {
@@ -221,6 +231,9 @@ void reset(abort_callback &abort) {
 		abort.check();
 		store->deleteConfigBlob(key);
 	}
+
+	delete_file_if_exists(config::database_path(), abort);
+	delete_file_if_exists(config::metadata_json_cache_path(), abort);
 
 	FB2K_console_formatter()
 		<< "[foo_opensubsonic][cache] local cache reset complete";
