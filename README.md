@@ -2,7 +2,9 @@
 
 [OpenSubsonic](https://github.com/opensubsonic/open-subsonic-api)/[Navidrome](https://github.com/navidrome/navidrome/) client implementation for [foobar2000](https://www.foobar2000.org/). In heavy development, but already functional for basic music playback.
 
-![preview](https://github.com/user-attachments/assets/427b8525-2ee1-4c15-8710-ba7f8a715ab2)
+| Windows® XP | Windows® 7 |
+|-|-|
+| ![previewXP](https://github.com/user-attachments/assets/190ee916-74df-4d92-bb6b-1a0deeda9c19) | ![preview](https://github.com/user-attachments/assets/427b8525-2ee1-4c15-8710-ba7f8a715ab2) |
 
 ## Features
 
