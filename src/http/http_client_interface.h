@@ -1,0 +1,54 @@
+#pragma once
+
+#include "../types.h"
+
+#include <nlohmann/json.hpp>
+#include <SDK/foobar2000.h>
+
+#include <vector>
+#include <cstdint>
+
+namespace subsonic {
+
+// HTTP response structure
+struct http_response {
+	int status_code = 0;
+	pfc::string8 body;
+	pfc::string8 status_text;
+	bool success = false;
+};
+
+// Interface for HTTP client - enables dependency injection and testing
+// Implementations can use foobar2000 SDK, libcurl, or mock responses
+//
+// Performance Note:
+// Virtual call overhead is ~3ns on modern CPUs (negligible compared to HTTP latency)
+// HTTP requests take 10-1000ms, so 0.000003ms virtual call overhead is <0.0003%
+// Testability benefit far outweighs tiny performance cost
+class IHttpClient {
+  public:
+	virtual ~IHttpClient() = default;
+
+	// Perform HTTP GET request to OpenSubsonic API endpoint
+	// endpoint: API method (e.g., "getArtists.view")
+	// params: Query parameters (credentials added automatically)
+	// Returns: Parsed JSON response (throws on HTTP errors)
+	//
+	// Performance: HTTP latency dominates (10-1000ms), virtual call ~3ns negligible
+	[[nodiscard]] virtual nlohmann::json fetch_api(
+		const char *endpoint,
+		const std::vector<query_param> &params = {}) = 0;
+
+	// Low-level HTTP GET (for non-API requests like artwork)
+	// Returns: Raw HTTP response with status code and body
+	[[nodiscard]] virtual http_response get(const char *url) = 0;
+
+	// Download binary data (for artwork, etc.)
+	// max_bytes: Limit download size
+	// Returns: Binary data vector
+	[[nodiscard]] virtual std::vector<uint8_t> get_binary(
+		const char *url,
+		size_t max_bytes = 10 * 1024 * 1024) = 0;
+};
+
+} // namespace subsonic

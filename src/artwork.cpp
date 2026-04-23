@@ -3,7 +3,7 @@
 #include "artwork.h"
 #include "cache.h"
 #include "config.h"
-#include "http.h"
+#include "http/http.h"
 #include "metadata.h"
 #include "utils/time_utils.h"
 #include "utils/utils.h"

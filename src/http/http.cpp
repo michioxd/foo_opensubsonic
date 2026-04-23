@@ -1,8 +1,8 @@
-#include "stdafx.h"
+#include "../stdafx.h"
 
 #include "http.h"
 
-#include "utils/utils.h"
+#include "../utils/utils.h"
 
 namespace {
 

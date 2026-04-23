@@ -5,7 +5,8 @@
 
 #include "cache.h"
 #include "config.h"
-#include "http.h"
+#include "http/foobar_http_client.h"
+#include "http/http.h"
 #include "library_sync_engine.h"
 #include "metadata.h"
 #include "sync_types.h"
@@ -239,20 +240,18 @@ void set_library_fetch_status(threaded_process_status &status,
 [[nodiscard]] std::vector<artist_sync_plan>
 build_artist_sync_plan(const subsonic::server_credentials &credentials,
 					   threaded_process_status &status, abort_callback &abort) {
-	// Create sync context with callbacks for dependency injection
+	// Create HTTP client (Stage 5: IHttpClient interface)
+	subsonic::foobar_http_client http_client(credentials, abort);
+
+	// Create sync context with injected dependencies
 	subsonic::sync::sync_context ctx;
+	ctx.http_client = &http_client;
 
-	// HTTP fetch callback
-	ctx.http_fetch = [&](const char *endpoint, const std::vector<subsonic::query_param> &params) -> json {
-		return fetch_endpoint(credentials, endpoint, params, abort);
-	};
-
-	// Progress text callback
+	// Progress callbacks
 	ctx.set_progress_text = [&](const char *message) {
 		status.set_item(message);
 	};
 
-	// Progress numeric callback (not used in this function)
 	ctx.set_progress_numeric = [&](size_t current, size_t total) {
 		status.set_progress(current, total);
 	};
@@ -369,20 +368,18 @@ fetch_library_sync_result(const subsonic::server_credentials &credentials,
 	const subsonic::server_credentials &credentials,
 	std::vector<subsonic::cached_track_metadata> &playlist_metadata_entries,
 	threaded_process_status &status, abort_callback &abort) {
-	// Create sync context with callbacks for dependency injection
+	// Create HTTP client (Stage 5: IHttpClient interface)
+	subsonic::foobar_http_client http_client(credentials, abort);
+
+	// Create sync context with injected dependencies
 	subsonic::sync::sync_context ctx;
+	ctx.http_client = &http_client;
 
-	// HTTP fetch callback
-	ctx.http_fetch = [&](const char *endpoint, const std::vector<subsonic::query_param> &params) -> json {
-		return fetch_endpoint(credentials, endpoint, params, abort);
-	};
-
-	// Progress text callback
+	// Progress callbacks
 	ctx.set_progress_text = [&](const char *message) {
 		status.set_item(message);
 	};
 
-	// Progress numeric callback
 	ctx.set_progress_numeric = [&](size_t current, size_t total) {
 		status.set_progress(current, total);
 	};

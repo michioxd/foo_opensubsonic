@@ -1,6 +1,6 @@
 #pragma once
 
-#include "types.h"
+#include "../types.h"
 
 #include <SDK/file.h>
 #include <SDK/http_client.h>

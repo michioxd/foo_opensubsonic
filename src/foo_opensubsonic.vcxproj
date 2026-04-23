@@ -268,7 +268,9 @@
     <ClInclude Include="artwork.h" />
     <ClInclude Include="cache.h" />
     <ClInclude Include="config.h" />
-    <ClInclude Include="http.h" />
+    <ClInclude Include="http\foobar_http_client.h" />
+    <ClInclude Include="http\http.h" />
+    <ClInclude Include="http\http_client_interface.h" />
     <ClInclude Include="library.h" />
     <ClInclude Include="library_sync_engine.h" />
     <ClInclude Include="metadata.h" />
@@ -292,7 +294,12 @@
     <ClCompile Include="cache.cpp" />
     <ClCompile Include="config.cpp" />
     <ClCompile Include="foo_opensubsonic.cpp" />
-    <ClCompile Include="http.cpp" />
+    <ClCompile Include="http\foobar_http_client.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="http\http.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
     <ClCompile Include="library.cpp" />
     <ClCompile Include="library_sync_engine.cpp" />
     <ClCompile Include="metadata.cpp" />

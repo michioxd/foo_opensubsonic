@@ -1,5 +1,6 @@
 #pragma once
 
+#include "http/http_client_interface.h"
 #include "sync_types.h"
 #include "types.h"
 
@@ -38,14 +39,8 @@ void merge_unique_metadata(std::vector<cached_track_metadata> &target,
 group_albums_by_artist(const std::vector<album_sync_summary> &albums);
 
 // ============================================================================
-// PART 2: Orchestration with Dependency Injection
+// PART 2: Orchestration with Dependency Injection (Stage 5 - Interface-based)
 // ============================================================================
-
-// Callback for HTTP requests - returns JSON response
-// Throws on HTTP errors
-using http_fetch_callback = std::function<nlohmann::json(
-	const char *endpoint,
-	const std::vector<query_param> &params)>;
 
 // Callback for progress updates
 using progress_callback = std::function<void(const char *message)>;
@@ -56,9 +51,10 @@ using progress_numeric_callback = std::function<void(size_t current, size_t tota
 // Callback for abort checking
 using abort_check_callback = std::function<void()>;
 
-// Sync context - bundles all callbacks for sync operations
+// Sync context - bundles HTTP client and UI callbacks
+// HTTP now uses IHttpClient interface instead of callback
 struct sync_context {
-	http_fetch_callback http_fetch;
+	IHttpClient *http_client = nullptr; // Injected HTTP client (interface)
 	progress_callback set_progress_text;
 	progress_numeric_callback set_progress_numeric;
 	abort_check_callback check_abort;
@@ -66,17 +62,20 @@ struct sync_context {
 
 // Build artist sync plan from server
 // Fetches album list with pagination, groups by artist
+// Requires: ctx.http_client must be non-null
 [[nodiscard]] std::vector<artist_sync_plan>
 build_artist_sync_plan(sync_context &ctx);
 
 // Fetch full library sync result
 // Orchestrates: build plan → fetch albums → parse tracks → deduplicate
+// Requires: ctx.http_client must be non-null
 [[nodiscard]] library_sync_result
 fetch_library_sync_result(sync_context &ctx);
 
 // Fetch remote playlists from server
 // Returns playlist sync results with deduplicated metadata
 // Also populates playlist_metadata_entries with unique metadata from all playlists
+// Requires: ctx.http_client must be non-null
 [[nodiscard]] std::vector<remote_playlist_sync_result>
 fetch_remote_playlists(sync_context &ctx,
 					   std::vector<cached_track_metadata> &playlist_metadata_entries);

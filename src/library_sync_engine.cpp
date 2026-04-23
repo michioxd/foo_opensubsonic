@@ -141,6 +141,10 @@ constexpr size_t k_album_list_page_size = 500;
 
 [[nodiscard]] std::vector<artist_sync_plan>
 build_artist_sync_plan(sync_context &ctx) {
+	if (ctx.http_client == nullptr) {
+		throw std::invalid_argument("sync_context::http_client is null");
+	}
+
 	std::vector<album_sync_summary> all_albums;
 
 	// Fetch all albums with pagination
@@ -154,8 +158,8 @@ build_artist_sync_plan(sync_context &ctx) {
 		params.push_back(query_param(pfc::string8("size"), format_size(k_album_list_page_size)));
 		params.push_back(query_param(pfc::string8("offset"), format_size(offset)));
 
-		// Fetch via callback
-		const auto album_list_root = ctx.http_fetch("getAlbumList2.view", params);
+		// Fetch via HTTP client interface
+		const auto album_list_root = ctx.http_client->fetch_api("getAlbumList2.view", params);
 
 		const auto album_list_it = album_list_root.find("albumList2");
 		if (album_list_it == album_list_root.end() ||
@@ -190,12 +194,16 @@ build_artist_sync_plan(sync_context &ctx) {
 [[nodiscard]] std::vector<remote_playlist_sync_result>
 fetch_remote_playlists(sync_context &ctx,
 					   std::vector<cached_track_metadata> &playlist_metadata_entries) {
+	if (ctx.http_client == nullptr) {
+		throw std::invalid_argument("sync_context::http_client is null");
+	}
+
 	std::vector<remote_playlist_sync_result> playlists;
 	std::unordered_map<std::string, size_t> metadata_index;
 
 	// Fetch playlist list
 	ctx.set_progress_text("Fetching playlist summaries...");
-	const auto playlists_root = ctx.http_fetch("getPlaylists.view", {});
+	const auto playlists_root = ctx.http_client->fetch_api("getPlaylists.view", {});
 	const auto playlists_it = playlists_root.find("playlists");
 	if (playlists_it == playlists_root.end() || !playlists_it->is_object()) {
 		return playlists;
@@ -224,7 +232,7 @@ fetch_remote_playlists(sync_context &ctx,
 		// Fetch playlist detail
 		std::vector<query_param> params;
 		params.push_back(query_param(pfc::string8("id"), playlist_id));
-		const auto playlist_root = ctx.http_fetch("getPlaylist.view", params);
+		const auto playlist_root = ctx.http_client->fetch_api("getPlaylist.view", params);
 		const auto playlist_it = playlist_root.find("playlist");
 		if (playlist_it == playlist_root.end() || !playlist_it->is_object()) {
 			continue;
