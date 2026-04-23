@@ -9,7 +9,6 @@
 #include <SDK/preferences_page.h>
 #include <helpers/DarkMode.h>
 #include <helpers/atl-misc.h>
-#include <libPPUI/HyperLinkCtrl.h>
 
 namespace {
 
@@ -59,6 +58,7 @@ class opensubsonic_preferences_dialog
 	COMMAND_HANDLER_EX(IDC_OS_CLEAR_ARTWORK_CACHE, BN_CLICKED,
 					   OnClearArtworkCacheClicked)
 	COMMAND_HANDLER_EX(IDC_OS_CLEAR_CACHE, BN_CLICKED, OnClearCacheClicked)
+	MSG_WM_NOTIFY(OnNotify)
 	END_MSG_MAP()
 
   private:
@@ -66,13 +66,22 @@ class opensubsonic_preferences_dialog
 		m_dark.AddDialogWithControls(*this);
 		set_dialog(subsonic::config::load_server_credentials());
 		set_footer_text();
-		initialize_hyperlinks();
 		return FALSE;
 	}
 
 	void OnEditChange(UINT, int, CWindow) { on_changed(); }
 
 	void OnToggleChange(UINT, int, CWindow) { on_changed(); }
+
+	LRESULT OnNotify(int idCtrl, LPNMHDR pnmh) {
+		if (idCtrl == IDC_OS_GITHUB_LINK &&
+			(pnmh->code == NM_CLICK || pnmh->code == NM_RETURN)) {
+			ShellExecuteA(NULL, "open", OPENSUBSONIC_COMPONENT_REPOSITORY_URL,
+						  NULL, NULL, SW_SHOWNORMAL);
+			return 0;
+		}
+		return 0;
+	}
 
 	void OnSyncNowClicked(UINT, int, CWindow) {
 		if (has_changed()) {
@@ -112,18 +121,11 @@ class opensubsonic_preferences_dialog
 		subsonic::library::clear_cache_async();
 	}
 
-	void initialize_hyperlinks() {
-		PP::createHyperLink(GetDlgItem(IDC_OS_GITHUB_LINK),
-							L"https://github.com/michioxd/foo_opensubsonic");
-	}
-
 	void set_footer_text() {
 		pfc::string_formatter version_text;
 		version_text << OPENSUBSONIC_COMPONENT_NAME << " v"
 					 << OPENSUBSONIC_COMPONENT_VERSION;
 		uSetDlgItemText(*this, IDC_OS_VERSION_TEXT, version_text);
-		uSetDlgItemText(*this, IDC_OS_GITHUB_LINK,
-						OPENSUBSONIC_COMPONENT_REPOSITORY_URL);
 	}
 
 	[[nodiscard]] subsonic::server_credentials default_credentials() const {
