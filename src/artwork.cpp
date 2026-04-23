@@ -33,6 +33,22 @@ constexpr size_t k_lru_cache_max_bytes = 64 * 1024 * 1024; // 64MB total
 using artwork_cache_map =
 	std::unordered_map<std::string, subsonic::artwork_cache_entry>;
 
+// Transparent hash for string types (enables heterogeneous lookup)
+struct string_hash {
+	using is_transparent = void;
+	using hash_type = std::hash<std::string_view>;
+
+	size_t operator()(const char *str) const noexcept {
+		return hash_type{}(str);
+	}
+	size_t operator()(std::string_view str) const noexcept {
+		return hash_type{}(str);
+	}
+	size_t operator()(const std::string &str) const noexcept {
+		return hash_type{}(str);
+	}
+};
+
 // LRU cache entry for decoded artwork data
 struct artwork_data_cache_entry {
 	album_art_data_ptr data;
@@ -46,8 +62,10 @@ struct artwork_data_cache_entry {
 		  last_access_time(subsonic::time_utils::current_unix_time_ms()) {}
 };
 
+// Use transparent hash and std::equal_to<> for heterogeneous lookup
 using artwork_data_cache_map =
-	std::unordered_map<std::string, artwork_data_cache_entry>;
+	std::unordered_map<std::string, artwork_data_cache_entry, string_hash,
+					   std::equal_to<>>;
 
 std::shared_mutex g_artwork_cache_mutex;
 artwork_cache_map g_artwork_cache;
@@ -262,11 +280,14 @@ try_get_artwork_data_from_cache(const char *path,
 		return false;
 	}
 
-	const std::string key(path);
+	// Use string_view for zero-copy lookup (no heap allocation)
+	const std::string_view key_view(path);
 	const auto now = subsonic::time_utils::current_unix_time_ms();
 
 	std::unique_lock lock(g_artwork_data_cache_mutex);
-	const auto found = g_artwork_data_cache.find(key);
+
+	// Heterogeneous lookup - finds without creating temporary string
+	const auto found = g_artwork_data_cache.find(key_view);
 	if (found == g_artwork_data_cache.end()) {
 		return false;
 	}
@@ -314,12 +335,13 @@ void insert_artwork_data_to_cache(const char *path,
 		return; // Don't cache empty or oversized artwork
 	}
 
-	const std::string key(path);
+	// Use string_view for zero-copy lookup
+	const std::string_view key_view(path);
 
 	std::unique_lock lock(g_artwork_data_cache_mutex);
 
-	// If already cached, just update access time
-	auto found = g_artwork_data_cache.find(key);
+	// If already cached, just update access time (heterogeneous lookup)
+	auto found = g_artwork_data_cache.find(key_view);
 	if (found != g_artwork_data_cache.end()) {
 		found->second.last_access_time =
 			subsonic::time_utils::current_unix_time_ms();
@@ -329,8 +351,8 @@ void insert_artwork_data_to_cache(const char *path,
 	// Evict LRU entries if needed
 	evict_lru_artwork_data(size_bytes);
 
-	// Insert new entry
-	g_artwork_data_cache.emplace(key,
+	// Insert new entry (creates string from string_view only once)
+	g_artwork_data_cache.emplace(std::string(path),
 								 artwork_data_cache_entry(data, size_bytes));
 	g_artwork_data_cache_total_bytes += size_bytes;
 }
