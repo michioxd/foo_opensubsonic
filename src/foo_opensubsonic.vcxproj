@@ -274,6 +274,7 @@
     <ClInclude Include="playback.h" />
     <ClInclude Include="resource.h" />
     <ClInclude Include="stdafx.h" />
+    <ClInclude Include="sync_types.h" />
     <ClInclude Include="types.h" />
     <ClInclude Include="utils\crypto_util.h" />
     <ClInclude Include="utils\string_util.h" />

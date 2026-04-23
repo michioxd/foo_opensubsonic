@@ -7,6 +7,7 @@
 #include "config.h"
 #include "http.h"
 #include "metadata.h"
+#include "sync_types.h"
 #include "utils/subsonic_json_parser.h"
 #include "utils/utils.h"
 
@@ -126,40 +127,13 @@ public:
 	}
 };
 
-struct library_sync_result {
-	std::vector<subsonic::cached_track_metadata> entries;
-	metadb_handle_list handles;
-};
-
-struct album_sync_summary {
-	pfc::string8 album_id;
-	pfc::string8 artist_id;
-	pfc::string8 artist_name;
-	size_t track_count = 0;
-};
-
-struct artist_sync_plan {
-	pfc::string8 artist_id;
-	pfc::string8 artist_name;
-	std::vector<album_sync_summary> albums;
-	size_t total_track_count = 0;
-};
-
-struct remote_playlist_sync_result {
-	pfc::string8 remote_id;
-	pfc::string8 name;
-	metadb_handle_list handles;
-};
-
-struct sync_outcome {
-	bool includes_library = false;
-	bool includes_playlists = false;
-	library_sync_result library;
-	std::vector<remote_playlist_sync_result> playlists;
-	std::vector<subsonic::cached_track_metadata> playlist_metadata_entries;
-};
-
-enum class sync_mode { library_only, playlists_only, all };
+// Sync data structures moved to sync_types.h
+using subsonic::sync::library_sync_result;
+using subsonic::sync::album_sync_summary;
+using subsonic::sync::artist_sync_plan;
+using subsonic::sync::remote_playlist_sync_result;
+using subsonic::sync::sync_outcome;
+using subsonic::sync::sync_mode;
 
 constexpr size_t k_album_list_page_size = 500;
 
