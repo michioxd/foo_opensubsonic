@@ -32,6 +32,14 @@ void populate_response_metadata(subsonic::http::response &out) {
 	}
 }
 
+size_t clamp_chunk_size(size_t chunk_size) noexcept {
+	return chunk_size == 0 ? k_default_chunk_size : chunk_size;
+}
+
+} // namespace
+
+namespace subsonic::http {
+
 int parse_status_code(const pfc::string8 &status_text) noexcept {
 	if (status_text.length() < 3) {
 		return 0;
@@ -50,14 +58,6 @@ int parse_status_code(const pfc::string8 &status_text) noexcept {
 
 	return 0;
 }
-
-size_t clamp_chunk_size(size_t chunk_size) noexcept {
-	return chunk_size == 0 ? k_default_chunk_size : chunk_size;
-}
-
-} // namespace
-
-namespace subsonic::http {
 
 response open(const char *url, abort_callback &abort,
 			  const request_params &params) {
