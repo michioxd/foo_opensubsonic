@@ -7,6 +7,7 @@
 #include "config.h"
 #include "http.h"
 #include "metadata.h"
+#include "subsonic_json_parser.h"
 #include "utils.h"
 
 #include <SDK/core_api.h>
@@ -177,103 +178,10 @@ constexpr size_t k_album_list_page_size = 500;
 	return static_api_ptr_t<metadb>()->handle_create(path, 0);
 }
 
-template <typename Callback>
-void for_each_json_value(const json &value, Callback &&callback) {
-	if (value.is_null()) {
-		return;
-	}
-	if (value.is_array()) {
-		for (const auto &item : value) {
-			callback(item);
-		}
-		return;
-	}
-	callback(value);
-}
-
-template <typename Callback>
-void for_each_member_item(const json &parent, const char *member,
-						  Callback &&callback) {
-	if (member == nullptr || !parent.is_object()) {
-		return;
-	}
-
-	const auto found = parent.find(member);
-	if (found == parent.end()) {
-		return;
-	}
-
-	for_each_json_value(*found, std::forward<Callback>(callback));
-}
-
-[[nodiscard]] pfc::string8 json_to_string(const json &value) {
-	if (value.is_string()) {
-		return value.get_ref<const std::string &>().c_str();
-	}
-	if (value.is_number_integer()) {
-		return std::to_string(value.get<long long>()).c_str();
-	}
-	if (value.is_number_unsigned()) {
-		return std::to_string(value.get<unsigned long long>()).c_str();
-	}
-	if (value.is_number_float()) {
-		return std::to_string(value.get<double>()).c_str();
-	}
-	if (value.is_boolean()) {
-		return value.get<bool>() ? "true" : "false";
-	}
-	return {};
-}
-
-[[nodiscard]] pfc::string8 json_to_metadata_string(const json &value) {
-	const auto scalar = json_to_string(value);
-	if (!scalar.is_empty() || value.is_string() || value.is_boolean() ||
-		value.is_number()) {
-		return scalar;
-	}
-
-	if (value.is_array() || value.is_object()) {
-		return value.dump().c_str();
-	}
-
-	return {};
-}
-
-[[nodiscard]] pfc::string8 json_get_string(const json &object,
-										   const char *member) {
-	if (!object.is_object() || member == nullptr) {
-		return {};
-	}
-
-	const auto found = object.find(member);
-	if (found == object.end()) {
-		return {};
-	}
-
-	return json_to_string(*found);
-}
-
-[[nodiscard]] double json_get_number(const json &object, const char *member) {
-	if (!object.is_object() || member == nullptr) {
-		return 0.0;
-	}
-
-	const auto found = object.find(member);
-	if (found == object.end()) {
-		return 0.0;
-	}
-
-	if (found->is_number()) {
-		return found->get<double>();
-	}
-	if (found->is_string()) {
-		return std::atof(found->get_ref<const std::string &>().c_str());
-	}
-	return 0.0;
-}
+// JSON parsing utilities moved to subsonic_json_parser.h/cpp
 
 [[nodiscard]] size_t json_get_size_t(const json &object, const char *member) {
-	const auto value = json_get_number(object, member);
+	const auto value = subsonic::json_parser::get_number(object, member);
 	return value > 0.0 ? static_cast<size_t>(value) : 0;
 }
 
@@ -287,12 +195,12 @@ void for_each_member_item(const json &parent, const char *member,
 	}
 
 	const json &root = *root_it;
-	const auto status = json_get_string(root, "status");
+	const auto status = subsonic::json_parser::get_string(root, "status");
 	if (!subsonic::strings_equal(status, "ok")) {
 		pfc::string8 message = "OpenSubsonic request failed";
 		const auto error_it = root.find("error");
 		if (error_it != root.end() && error_it->is_object()) {
-			const auto detail = json_get_string(*error_it, "message");
+			const auto detail = subsonic::json_parser::get_string(*error_it, "message");
 			if (!detail.is_empty()) {
 				message = detail;
 			}
@@ -326,24 +234,24 @@ make_query_params(std::initializer_list<subsonic::query_param> params) {
 [[nodiscard]] subsonic::cached_track_metadata
 parse_track_metadata(const json &song) {
 	subsonic::cached_track_metadata entry;
-	entry.track_id = json_get_string(song, "id");
-	entry.artist = json_get_string(song, "artist");
-	entry.title = json_get_string(song, "title");
-	entry.album = json_get_string(song, "album");
-	entry.cover_art_id = json_get_string(song, "coverArt");
-	entry.stream_mime_type = json_get_string(song, "contentType");
-	entry.suffix = json_get_string(song, "suffix");
+	entry.track_id = subsonic::json_parser::get_string(song, "id");
+	entry.artist = subsonic::json_parser::get_string(song, "artist");
+	entry.title = subsonic::json_parser::get_string(song, "title");
+	entry.album = subsonic::json_parser::get_string(song, "album");
+	entry.cover_art_id = subsonic::json_parser::get_string(song, "coverArt");
+	entry.stream_mime_type = subsonic::json_parser::get_string(song, "contentType");
+	entry.suffix = subsonic::json_parser::get_string(song, "suffix");
 	entry.duration_seconds = json_get_number(song, "duration");
-	entry.track_number = json_get_string(song, "track");
-	entry.disc_number = json_get_string(song, "discNumber");
-	entry.year = json_get_string(song, "year");
-	entry.genre = json_get_string(song, "genre");
-	entry.bitrate = json_get_string(song, "bitRate");
+	entry.track_number = subsonic::json_parser::get_string(song, "track");
+	entry.disc_number = subsonic::json_parser::get_string(song, "discNumber");
+	entry.year = subsonic::json_parser::get_string(song, "year");
+	entry.genre = subsonic::json_parser::get_string(song, "genre");
+	entry.bitrate = subsonic::json_parser::get_string(song, "bitRate");
 
 	if (song.is_object()) {
 		entry.extra_fields.reserve(song.size());
 		for (auto it = song.begin(); it != song.end(); ++it) {
-			const auto value = json_to_metadata_string(it.value());
+			const auto value = subsonic::json_parser::to_metadata_string(it.value());
 			if (value.is_empty()) {
 				continue;
 			}
@@ -423,12 +331,12 @@ build_artist_sync_plan(const subsonic::server_credentials &credentials,
 		}
 
 		std::vector<album_sync_summary> page_albums;
-		for_each_member_item(
+		subsonic::json_parser::for_each_member_item(
 			*album_list_it, "album", [&](const json &album_node) {
 				album_sync_summary summary;
-				summary.album_id = json_get_string(album_node, "id");
-				summary.artist_id = json_get_string(album_node, "artistId");
-				summary.artist_name = json_get_string(album_node, "artist");
+				summary.album_id = subsonic::json_parser::get_string(album_node, "id");
+				summary.artist_id = subsonic::json_parser::get_string(album_node, "artistId");
+				summary.artist_name = subsonic::json_parser::get_string(album_node, "artist");
 				summary.track_count = json_get_size_t(album_node, "songCount");
 				if (!summary.album_id.is_empty()) {
 					page_albums.push_back(std::move(summary));
@@ -542,7 +450,7 @@ fetch_library_sync_result(const subsonic::server_credentials &credentials,
 				continue;
 			}
 
-			for_each_member_item(*album_it, "song", [&](const json &song_node) {
+			subsonic::json_parser::for_each_member_item(*album_it, "song", [&](const json &song_node) {
 				abort.check();
 
 				const auto entry = parse_track_metadata(song_node);
@@ -594,15 +502,15 @@ fetch_library_sync_result(const subsonic::server_credentials &credentials,
 	status.set_item("Fetching playlist summaries...");
 
 	std::vector<std::pair<pfc::string8, pfc::string8>> summaries;
-	for_each_member_item(
+	subsonic::json_parser::for_each_member_item(
 		*playlists_it, "playlist", [&](const json &playlist_node) {
-			const auto playlist_id = json_get_string(playlist_node, "id");
+			const auto playlist_id = subsonic::json_parser::get_string(playlist_node, "id");
 			if (playlist_id.is_empty()) {
 				return;
 			}
 
 			summaries.emplace_back(playlist_id,
-								   json_get_string(playlist_node, "name"));
+								   subsonic::json_parser::get_string(playlist_node, "name"));
 		});
 
 	subsonic::log_info("playlist",
@@ -629,12 +537,12 @@ fetch_library_sync_result(const subsonic::server_credentials &credentials,
 
 		remote_playlist_sync_result local_playlist;
 		local_playlist.remote_id = playlist_id;
-		local_playlist.name = json_get_string(*playlist_it, "name");
+		local_playlist.name = subsonic::json_parser::get_string(*playlist_it, "name");
 		if (local_playlist.name.is_empty()) {
 			local_playlist.name = playlist_name;
 		}
 
-		for_each_member_item(
+		subsonic::json_parser::for_each_member_item(
 			*playlist_it, "entry", [&](const json &entry_node) {
 				const auto entry = parse_track_metadata(entry_node);
 				if (!entry.is_valid()) {

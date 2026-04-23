@@ -274,7 +274,9 @@
     <ClInclude Include="playback.h" />
     <ClInclude Include="resource.h" />
     <ClInclude Include="stdafx.h" />
+    <ClInclude Include="subsonic_json_parser.h" />
     <ClInclude Include="metadata_utils.h" />
+    <ClInclude Include="time_utils.h" />
     <ClInclude Include="types.h" />
     <ClInclude Include="utils.h" />
     <ClInclude Include="vfs.h" />
@@ -299,7 +301,9 @@
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|ARM64EC'">Create</PrecompiledHeader>
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|ARM64'">Create</PrecompiledHeader>
     </ClCompile>
+    <ClCompile Include="subsonic_json_parser.cpp" />
     <ClCompile Include="metadata_utils.cpp" />
+    <ClCompile Include="time_utils.cpp" />
     <ClCompile Include="utils.cpp" />
     <ClCompile Include="vfs.cpp" />
   </ItemGroup>
