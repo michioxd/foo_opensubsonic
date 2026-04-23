@@ -1,6 +1,6 @@
 #pragma once
 
-#include "types.h"
+#include "../types.h"
 
 #include <SDK/filesystem.h>
 #include <SDK/hasher_md5.h>

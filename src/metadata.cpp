@@ -2,9 +2,9 @@
 
 #include "cache.h"
 #include "metadata.h"
-#include "metadata_utils.h"
+#include "utils/metadata_utils.h"
 
-#include "utils.h"
+#include "utils/utils.h"
 
 #include <SDK/core_api.h>
 #include <SDK/initquit.h>
@@ -358,7 +358,6 @@ void remove_info_for_handles(metadb_handle_list handles,
 void dispatch_refresh_for_track_ids(
 	const std::vector<subsonic::cached_track_metadata> &entries) {
 	metadb_handle_list handles;
-	handles.remove_all();
 
 	for (const auto &entry : entries) {
 		if (!entry.is_valid()) {
@@ -395,6 +394,12 @@ void hint_metadata_async(const subsonic::cached_track_metadata &entry) {
 	static_api_ptr_t<metadb_io>()->hint_async(handle, info, fake_stats, true);
 }
 
+// Snapshot = In-memory cache of track metadata (g_track_metadata map)
+// Synchronized from server during library sync
+// Provides fast lookups without hitting persistent storage
+
+// Replace entire in-memory cache with new entries
+// REQUIRES: Caller must NOT hold g_track_metadata_mutex (function acquires it)
 void replace_snapshot_locked(
 	const std::vector<subsonic::cached_track_metadata> &entries) {
 	std::unordered_map<std::string, subsonic::cached_track_metadata> next;
@@ -411,6 +416,8 @@ void replace_snapshot_locked(
 	g_track_metadata = std::move(next);
 }
 
+// Insert or update single entry in in-memory cache
+// Thread-safe: acquires g_track_metadata_mutex
 void upsert_snapshot(const subsonic::cached_track_metadata &entry) {
 	if (!entry.is_valid()) {
 		return;
@@ -420,6 +427,8 @@ void upsert_snapshot(const subsonic::cached_track_metadata &entry) {
 	g_track_metadata.insert_or_assign(make_track_key(entry.track_id), entry);
 }
 
+// Remove single entry from in-memory cache
+// Thread-safe: acquires g_track_metadata_mutex
 void remove_snapshot(const char *track_id) {
 	const auto key = make_track_key(track_id);
 	if (key.empty()) {
@@ -430,6 +439,9 @@ void remove_snapshot(const char *track_id) {
 	g_track_metadata.erase(key);
 }
 
+// Get metadata from in-memory cache
+// Thread-safe: acquires g_track_metadata_mutex (shared lock for read)
+// Returns false if track_id not found
 [[nodiscard]] bool try_get_snapshot(const char *track_id,
 									subsonic::cached_track_metadata &out) {
 	out = {};
@@ -801,6 +813,39 @@ void refresh_track(const char *track_id) {
 
 	fb2k::inMainThread(
 		[handle] { static_api_ptr_t<metadb_io>()->dispatch_refresh(handle); });
+}
+
+pfc::string8 make_display_name_for_path(const char *path) {
+	cached_track_metadata track;
+	if (try_get_track_metadata_for_path(path, track)) {
+		const auto value =
+			subsonic::metadata_utils::make_display_name_from_metadata(track);
+		if (!value.is_empty()) {
+			return value;
+		}
+	}
+
+	pfc::string8 track_id;
+	if (subsonic::extract_track_id_from_path(path, track_id)) {
+		return track_id;
+	}
+
+	return path != nullptr ? pfc::string8(path) : pfc::string8();
+}
+
+void overlay_file_info_for_path(const char *path, file_info &info) {
+	file_info_impl overlay;
+	if (!try_make_file_info_for_path(path, overlay)) {
+		return;
+	}
+
+	info.overwrite_meta(overlay);
+	info.overwrite_info(overlay);
+	if (overlay.get_length() > 0) {
+		info.set_length(overlay.get_length());
+	}
+	info.set_replaygain(replaygain_info::g_merge(overlay.get_replaygain(),
+												 info.get_replaygain()));
 }
 
 } // namespace subsonic::metadata

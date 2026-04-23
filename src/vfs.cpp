@@ -3,10 +3,10 @@
 #include "vfs.h"
 
 #include "config.h"
-#include "http.h"
+#include "http/http.h"
 #include "metadata.h"
-#include "metadata_utils.h"
-#include "utils.h"
+#include "utils/metadata_utils.h"
+#include "utils/utils.h"
 
 #include <SDK/file.h>
 #include <SDK/file_info_impl.h>
@@ -250,7 +250,7 @@ class subsonic_input : public input_stubs {
 		}
 
 		m_reader->get_info(0, p_info, p_abort);
-		subsonic::metadata_utils::overlay_file_info_for_path(m_path, p_info);
+		subsonic::metadata::overlay_file_info_for_path(m_path, p_info);
 	}
 
 	t_filestats2 get_stats2(unsigned f, abort_callback &a) {
@@ -305,7 +305,7 @@ class subsonic_input : public input_stubs {
 			return false;
 		}
 
-		subsonic::metadata_utils::overlay_file_info_for_path(m_path, p_out);
+		subsonic::metadata::overlay_file_info_for_path(m_path, p_out);
 		return true;
 	}
 
@@ -389,7 +389,7 @@ class subsonic_filesystem_impl : public filesystem_v3 {
 			return false;
 		}
 
-		out = subsonic::metadata_utils::make_display_name_for_path(path);
+		out = subsonic::metadata::make_display_name_for_path(path);
 		return true;
 	}
 
@@ -510,7 +510,7 @@ class subsonic_filesystem_impl : public filesystem_v3 {
 
 	void extract_filename_ext(const char *path,
 							  pfc::string_base &out) override {
-		out = subsonic::metadata_utils::make_display_name_for_path(path);
+		out = subsonic::metadata::make_display_name_for_path(path);
 	}
 
 	bool get_parent_path(const char *path, pfc::string_base &out) override {
@@ -557,7 +557,7 @@ class subsonic_filesystem_impl : public filesystem_v3 {
 			return false;
 		}
 
-		out = subsonic::metadata_utils::make_display_name_for_path(path);
+		out = subsonic::metadata::make_display_name_for_path(path);
 		return true;
 	}
 

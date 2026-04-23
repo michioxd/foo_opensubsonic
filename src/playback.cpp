@@ -1,13 +1,13 @@
 #include "stdafx.h"
 
 #include "config.h"
-#include "http.h"
-#include "utils.h"
+#include "http/http.h"
+#include "utils/time_utils.h"
+#include "utils/utils.h"
 
 #include <SDK/app_close_blocker.h>
 #include <SDK/play_callback.h>
 
-#include <chrono>
 #include <mutex>
 
 namespace {
@@ -20,20 +20,13 @@ std::mutex g_playback_state_mutex;
 pfc::string8 g_last_now_playing_track_id;
 std::uint64_t g_last_now_playing_unix_ms = 0;
 
-[[nodiscard]] std::uint64_t current_unix_time_ms() noexcept {
-	return static_cast<std::uint64_t>(
-		std::chrono::duration_cast<std::chrono::milliseconds>(
-			std::chrono::system_clock::now().time_since_epoch())
-			.count());
-}
-
 [[nodiscard]] bool should_send_now_playing(const char *track_id, bool force) {
 	if (track_id == nullptr || *track_id == '\0') {
 		return false;
 	}
 
 	std::scoped_lock lock(g_playback_state_mutex);
-	const auto now_ms = current_unix_time_ms();
+	const auto now_ms = subsonic::time_utils::current_unix_time_ms();
 	const bool same_track = g_last_now_playing_track_id == track_id;
 	if (!force && same_track &&
 		(now_ms - g_last_now_playing_unix_ms) <

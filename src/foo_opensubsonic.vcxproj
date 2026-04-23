@@ -268,27 +268,48 @@
     <ClInclude Include="artwork.h" />
     <ClInclude Include="cache.h" />
     <ClInclude Include="config.h" />
-    <ClInclude Include="http.h" />
+    <ClInclude Include="foobar_metadata_repository.h" />
+    <ClInclude Include="http\foobar_http_client.h" />
+    <ClInclude Include="http\http.h" />
+    <ClInclude Include="http\http_client_interface.h" />
     <ClInclude Include="library.h" />
+    <ClInclude Include="library_sync_engine.h" />
     <ClInclude Include="metadata.h" />
+    <ClInclude Include="metadata_repository_interface.h" />
     <ClInclude Include="playback.h" />
     <ClInclude Include="resource.h" />
+    <ClInclude Include="service_locator.h" />
     <ClInclude Include="stdafx.h" />
-    <ClInclude Include="metadata_utils.h" />
+    <ClInclude Include="sync_types.h" />
     <ClInclude Include="types.h" />
-    <ClInclude Include="utils.h" />
+    <ClInclude Include="utils\crypto_util.h" />
+    <ClInclude Include="utils\string_util.h" />
+    <ClInclude Include="utils\subsonic_json_parser.h" />
+    <ClInclude Include="utils\metadata_utils.h" />
+    <ClInclude Include="utils\time_utils.h" />
+    <ClInclude Include="utils\track_path_util.h" />
+    <ClInclude Include="utils\url_builder.h" />
+    <ClInclude Include="utils\utils.h" />
     <ClInclude Include="vfs.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="artwork.cpp" />
     <ClCompile Include="cache.cpp" />
     <ClCompile Include="config.cpp" />
+    <ClCompile Include="foobar_metadata_repository.cpp" />
     <ClCompile Include="foo_opensubsonic.cpp" />
-    <ClCompile Include="http.cpp" />
+    <ClCompile Include="http\foobar_http_client.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="http\http.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
     <ClCompile Include="library.cpp" />
+    <ClCompile Include="library_sync_engine.cpp" />
     <ClCompile Include="metadata.cpp" />
     <ClCompile Include="playback.cpp" />
     <ClCompile Include="preferences.cpp" />
+    <ClCompile Include="service_locator.cpp" />
     <ClCompile Include="stdafx.cpp">
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">Create</PrecompiledHeader>
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Create</PrecompiledHeader>
@@ -299,8 +320,30 @@
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|ARM64EC'">Create</PrecompiledHeader>
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|ARM64'">Create</PrecompiledHeader>
     </ClCompile>
-    <ClCompile Include="metadata_utils.cpp" />
-    <ClCompile Include="utils.cpp" />
+    <ClCompile Include="utils\crypto_util.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="utils\string_util.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="utils\subsonic_json_parser.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="utils\metadata_utils.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="utils\time_utils.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="utils\track_path_util.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="utils\url_builder.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="utils\utils.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
     <ClCompile Include="vfs.cpp" />
   </ItemGroup>
   <ItemGroup>

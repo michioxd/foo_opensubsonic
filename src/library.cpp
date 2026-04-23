@@ -5,9 +5,13 @@
 
 #include "cache.h"
 #include "config.h"
-#include "http.h"
+#include "http/foobar_http_client.h"
+#include "http/http.h"
+#include "library_sync_engine.h"
 #include "metadata.h"
-#include "utils.h"
+#include "sync_types.h"
+#include "utils/subsonic_json_parser.h"
+#include "utils/utils.h"
 
 #include <SDK/core_api.h>
 #include <SDK/menu.h>
@@ -65,44 +69,74 @@ const GUID guid_playlist_property_remote_id = {
 	0x4330,
 	{0xbf, 0x3a, 0xb7, 0xbb, 0x03, 0x59, 0x9f, 0x1d}};
 
-std::atomic_bool g_sync_in_progress = false;
+// Mutex to guard sync operations (library sync, playlist sync, cache operations)
+// Prevents concurrent sync jobs which could corrupt cache state
+std::mutex g_sync_mutex;
+bool g_sync_in_progress = false; // Protected by g_sync_mutex
 
-struct library_sync_result {
-	std::vector<subsonic::cached_track_metadata> entries;
-	metadb_handle_list handles;
+// RAII guard for sync operations
+// Ensures g_sync_in_progress is always reset even if operation throws
+class sync_guard {
+	std::unique_lock<std::mutex> m_lock;
+	bool m_acquired = false;
+
+public:
+	sync_guard() = default;
+
+	// Try to acquire sync lock
+	// Returns false if another sync is already in progress
+	bool try_acquire() {
+		m_lock = std::unique_lock<std::mutex>(g_sync_mutex, std::try_to_lock);
+		if (!m_lock.owns_lock()) {
+			return false;
+		}
+		if (g_sync_in_progress) {
+			m_lock.unlock();
+			return false;
+		}
+		g_sync_in_progress = true;
+		m_acquired = true;
+		return true;
+	}
+
+	~sync_guard() {
+		if (m_acquired && m_lock.owns_lock()) {
+			g_sync_in_progress = false;
+		}
+	}
+
+	// Non-copyable but movable
+	sync_guard(const sync_guard &) = delete;
+	sync_guard &operator=(const sync_guard &) = delete;
+
+	sync_guard(sync_guard &&other) noexcept
+		: m_lock(std::move(other.m_lock)), m_acquired(other.m_acquired) {
+		other.m_acquired = false; // Transfer ownership
+	}
+
+	sync_guard &operator=(sync_guard &&other) noexcept {
+		if (this != &other) {
+			// Release current lock if held
+			if (m_acquired && m_lock.owns_lock()) {
+				g_sync_in_progress = false;
+			}
+			// Transfer from other
+			m_lock = std::move(other.m_lock);
+			m_acquired = other.m_acquired;
+			other.m_acquired = false;
+		}
+		return *this;
+	}
 };
 
-struct album_sync_summary {
-	pfc::string8 album_id;
-	pfc::string8 artist_id;
-	pfc::string8 artist_name;
-	size_t track_count = 0;
-};
-
-struct artist_sync_plan {
-	pfc::string8 artist_id;
-	pfc::string8 artist_name;
-	std::vector<album_sync_summary> albums;
-	size_t total_track_count = 0;
-};
-
-struct remote_playlist_sync_result {
-	pfc::string8 remote_id;
-	pfc::string8 name;
-	metadb_handle_list handles;
-};
-
-struct sync_outcome {
-	bool includes_library = false;
-	bool includes_playlists = false;
-	library_sync_result library;
-	std::vector<remote_playlist_sync_result> playlists;
-	std::vector<subsonic::cached_track_metadata> playlist_metadata_entries;
-};
-
-enum class sync_mode { library_only, playlists_only, all };
-
-constexpr size_t k_album_list_page_size = 500;
+// Sync data structures moved to sync_types.h
+using subsonic::sync::library_sync_result;
+using subsonic::sync::album_sync_summary;
+using subsonic::sync::artist_sync_plan;
+using subsonic::sync::remote_playlist_sync_result;
+using subsonic::sync::sync_outcome;
+using subsonic::sync::sync_mode;
+using subsonic::sync::k_album_list_page_size;
 
 [[nodiscard]] pfc::string8 make_remote_playlist_name(const char *name) {
 	pfc::string8 out = k_remote_playlist_prefix;
@@ -119,103 +153,10 @@ constexpr size_t k_album_list_page_size = 500;
 	return static_api_ptr_t<metadb>()->handle_create(path, 0);
 }
 
-template <typename Callback>
-void for_each_json_value(const json &value, Callback &&callback) {
-	if (value.is_null()) {
-		return;
-	}
-	if (value.is_array()) {
-		for (const auto &item : value) {
-			callback(item);
-		}
-		return;
-	}
-	callback(value);
-}
-
-template <typename Callback>
-void for_each_member_item(const json &parent, const char *member,
-						  Callback &&callback) {
-	if (member == nullptr || !parent.is_object()) {
-		return;
-	}
-
-	const auto found = parent.find(member);
-	if (found == parent.end()) {
-		return;
-	}
-
-	for_each_json_value(*found, std::forward<Callback>(callback));
-}
-
-[[nodiscard]] pfc::string8 json_to_string(const json &value) {
-	if (value.is_string()) {
-		return value.get_ref<const std::string &>().c_str();
-	}
-	if (value.is_number_integer()) {
-		return std::to_string(value.get<long long>()).c_str();
-	}
-	if (value.is_number_unsigned()) {
-		return std::to_string(value.get<unsigned long long>()).c_str();
-	}
-	if (value.is_number_float()) {
-		return std::to_string(value.get<double>()).c_str();
-	}
-	if (value.is_boolean()) {
-		return value.get<bool>() ? "true" : "false";
-	}
-	return {};
-}
-
-[[nodiscard]] pfc::string8 json_to_metadata_string(const json &value) {
-	const auto scalar = json_to_string(value);
-	if (!scalar.is_empty() || value.is_string() || value.is_boolean() ||
-		value.is_number()) {
-		return scalar;
-	}
-
-	if (value.is_array() || value.is_object()) {
-		return value.dump().c_str();
-	}
-
-	return {};
-}
-
-[[nodiscard]] pfc::string8 json_get_string(const json &object,
-										   const char *member) {
-	if (!object.is_object() || member == nullptr) {
-		return {};
-	}
-
-	const auto found = object.find(member);
-	if (found == object.end()) {
-		return {};
-	}
-
-	return json_to_string(*found);
-}
-
-[[nodiscard]] double json_get_number(const json &object, const char *member) {
-	if (!object.is_object() || member == nullptr) {
-		return 0.0;
-	}
-
-	const auto found = object.find(member);
-	if (found == object.end()) {
-		return 0.0;
-	}
-
-	if (found->is_number()) {
-		return found->get<double>();
-	}
-	if (found->is_string()) {
-		return std::atof(found->get_ref<const std::string &>().c_str());
-	}
-	return 0.0;
-}
+// JSON parsing utilities moved to subsonic_json_parser.h/cpp
 
 [[nodiscard]] size_t json_get_size_t(const json &object, const char *member) {
-	const auto value = json_get_number(object, member);
+	const auto value = subsonic::json_parser::get_number(object, member);
 	return value > 0.0 ? static_cast<size_t>(value) : 0;
 }
 
@@ -229,12 +170,12 @@ void for_each_member_item(const json &parent, const char *member,
 	}
 
 	const json &root = *root_it;
-	const auto status = json_get_string(root, "status");
+	const auto status = subsonic::json_parser::get_string(root, "status");
 	if (!subsonic::strings_equal(status, "ok")) {
 		pfc::string8 message = "OpenSubsonic request failed";
 		const auto error_it = root.find("error");
 		if (error_it != root.end() && error_it->is_object()) {
-			const auto detail = json_get_string(*error_it, "message");
+			const auto detail = subsonic::json_parser::get_string(*error_it, "message");
 			if (!detail.is_empty()) {
 				message = detail;
 			}
@@ -267,54 +208,13 @@ make_query_params(std::initializer_list<subsonic::query_param> params) {
 
 [[nodiscard]] subsonic::cached_track_metadata
 parse_track_metadata(const json &song) {
-	subsonic::cached_track_metadata entry;
-	entry.track_id = json_get_string(song, "id");
-	entry.artist = json_get_string(song, "artist");
-	entry.title = json_get_string(song, "title");
-	entry.album = json_get_string(song, "album");
-	entry.cover_art_id = json_get_string(song, "coverArt");
-	entry.stream_mime_type = json_get_string(song, "contentType");
-	entry.suffix = json_get_string(song, "suffix");
-	entry.duration_seconds = json_get_number(song, "duration");
-	entry.track_number = json_get_string(song, "track");
-	entry.disc_number = json_get_string(song, "discNumber");
-	entry.year = json_get_string(song, "year");
-	entry.genre = json_get_string(song, "genre");
-	entry.bitrate = json_get_string(song, "bitRate");
-
-	if (song.is_object()) {
-		entry.extra_fields.reserve(song.size());
-		for (auto it = song.begin(); it != song.end(); ++it) {
-			const auto value = json_to_metadata_string(it.value());
-			if (value.is_empty()) {
-				continue;
-			}
-
-			subsonic::track_metadata_field field;
-			field.key = it.key().c_str();
-			field.value = value;
-			entry.extra_fields.push_back(std::move(field));
-		}
-	}
-
-	return entry;
+	return subsonic::sync::parse_track_metadata(song);
 }
 
 void merge_unique_metadata(std::vector<subsonic::cached_track_metadata> &target,
 						   std::unordered_map<std::string, size_t> &index,
 						   const subsonic::cached_track_metadata &entry) {
-	if (!entry.is_valid()) {
-		return;
-	}
-
-	const std::string key = entry.track_id.c_str();
-	const auto found = index.find(key);
-	if (found == index.end()) {
-		index.emplace(key, target.size());
-		target.push_back(entry);
-	} else {
-		target[found->second] = entry;
-	}
+	subsonic::sync::merge_unique_metadata(target, index, entry);
 }
 
 void append_handle(metadb_handle_list &handles,
@@ -339,85 +239,30 @@ void set_library_fetch_status(threaded_process_status &status,
 [[nodiscard]] std::vector<artist_sync_plan>
 build_artist_sync_plan(const subsonic::server_credentials &credentials,
 					   threaded_process_status &status, abort_callback &abort) {
-	std::vector<artist_sync_plan> plans;
-	std::unordered_map<std::string, size_t> artist_index;
+	// Create HTTP client (Stage 5: IHttpClient interface)
+	subsonic::foobar_http_client http_client(credentials);
 
-	for (size_t offset = 0;; offset += k_album_list_page_size) {
+	// Create sync context with injected dependencies
+	subsonic::sync::sync_context ctx;
+	ctx.http_client = &http_client;
+	ctx.abort = &abort;
+
+	// Progress callbacks
+	ctx.set_progress_text = [&](const char *message) {
+		status.set_item(message);
+	};
+
+	ctx.set_progress_numeric = [&](size_t current, size_t total) {
+		status.set_progress(current, total);
+	};
+
+	// Abort check callback
+	ctx.check_abort = [&]() {
 		abort.check();
+	};
 
-		status.set_item(PFC_string_formatter()
-						<< "Fetching album index... (offset " << offset << ")");
-
-		const json album_list_root = fetch_endpoint(
-			credentials, "getAlbumList2.view",
-			make_query_params(
-				{subsonic::query_param("type", "alphabeticalByArtist"),
-				 subsonic::query_param("size", PFC_string_formatter()
-												   << k_album_list_page_size),
-				 subsonic::query_param("offset", PFC_string_formatter()
-													 << offset)}),
-			abort);
-
-		const auto album_list_it = album_list_root.find("albumList2");
-		if (album_list_it == album_list_root.end() ||
-			!album_list_it->is_object()) {
-			break;
-		}
-
-		std::vector<album_sync_summary> page_albums;
-		for_each_member_item(
-			*album_list_it, "album", [&](const json &album_node) {
-				album_sync_summary summary;
-				summary.album_id = json_get_string(album_node, "id");
-				summary.artist_id = json_get_string(album_node, "artistId");
-				summary.artist_name = json_get_string(album_node, "artist");
-				summary.track_count = json_get_size_t(album_node, "songCount");
-				if (!summary.album_id.is_empty()) {
-					page_albums.push_back(std::move(summary));
-				}
-			});
-
-		if (page_albums.empty()) {
-			break;
-		}
-
-		for (auto &album : page_albums) {
-			std::string key = album.artist_id.is_empty()
-								  ? std::string(album.artist_name.c_str())
-								  : std::string(album.artist_id.c_str());
-			if (key.empty()) {
-				key = "<unknown-artist>";
-			}
-
-			const auto found = artist_index.find(key);
-			if (found == artist_index.end()) {
-				artist_sync_plan plan;
-				plan.artist_id = album.artist_id;
-				plan.artist_name = album.artist_name;
-				plan.albums.push_back(album);
-				plan.total_track_count += album.track_count;
-
-				artist_index.emplace(std::move(key), plans.size());
-				plans.push_back(std::move(plan));
-			} else {
-				auto &plan = plans[found->second];
-				if (plan.artist_name.is_empty()) {
-					plan.artist_name = album.artist_name;
-				}
-				if (plan.artist_id.is_empty()) {
-					plan.artist_id = album.artist_id;
-				}
-				plan.total_track_count += album.track_count;
-				plan.albums.push_back(album);
-			}
-		}
-
-		if (page_albums.size() < k_album_list_page_size) {
-			break;
-		}
-	}
-
-	return plans;
+	// Delegate to extracted orchestration function
+	return subsonic::sync::build_artist_sync_plan(ctx);
 }
 
 [[nodiscard]] library_sync_result
@@ -484,7 +329,7 @@ fetch_library_sync_result(const subsonic::server_credentials &credentials,
 				continue;
 			}
 
-			for_each_member_item(*album_it, "song", [&](const json &song_node) {
+			subsonic::json_parser::for_each_member_item(*album_it, "song", [&](const json &song_node) {
 				abort.check();
 
 				const auto entry = parse_track_metadata(song_node);
@@ -523,75 +368,30 @@ fetch_library_sync_result(const subsonic::server_credentials &credentials,
 	const subsonic::server_credentials &credentials,
 	std::vector<subsonic::cached_track_metadata> &playlist_metadata_entries,
 	threaded_process_status &status, abort_callback &abort) {
-	std::vector<remote_playlist_sync_result> playlists;
-	std::unordered_map<std::string, size_t> metadata_index;
+	// Create HTTP client (Stage 5: IHttpClient interface)
+	subsonic::foobar_http_client http_client(credentials);
 
-	const json playlists_root =
-		fetch_endpoint(credentials, "getPlaylists.view", {}, abort);
-	const auto playlists_it = playlists_root.find("playlists");
-	if (playlists_it == playlists_root.end() || !playlists_it->is_object()) {
-		return playlists;
-	}
+	// Create sync context with injected dependencies
+	subsonic::sync::sync_context ctx;
+	ctx.http_client = &http_client;
+	ctx.abort = &abort;
 
-	status.set_item("Fetching playlist summaries...");
+	// Progress callbacks
+	ctx.set_progress_text = [&](const char *message) {
+		status.set_item(message);
+	};
 
-	std::vector<std::pair<pfc::string8, pfc::string8>> summaries;
-	for_each_member_item(
-		*playlists_it, "playlist", [&](const json &playlist_node) {
-			const auto playlist_id = json_get_string(playlist_node, "id");
-			if (playlist_id.is_empty()) {
-				return;
-			}
+	ctx.set_progress_numeric = [&](size_t current, size_t total) {
+		status.set_progress(current, total);
+	};
 
-			summaries.emplace_back(playlist_id,
-								   json_get_string(playlist_node, "name"));
-		});
-
-	subsonic::log_info("playlist",
-					   (PFC_string_formatter() << "syncing " << summaries.size()
-											   << " OpenSubsonic playlists")
-						   .c_str());
-	for (size_t i = 0; i < summaries.size(); ++i) {
+	// Abort check callback
+	ctx.check_abort = [&]() {
 		abort.check();
-		const auto &[playlist_id, playlist_name] = summaries[i];
+	};
 
-		status.set_progress(i, summaries.size());
-		status.set_item(PFC_string_formatter()
-						<< "Fetching playlist: " << playlist_name);
-
-		const json playlist_root = fetch_endpoint(
-			credentials, "getPlaylist.view",
-			make_query_params(
-				{subsonic::query_param(pfc::string8("id"), playlist_id)}),
-			abort);
-		const auto playlist_it = playlist_root.find("playlist");
-		if (playlist_it == playlist_root.end() || !playlist_it->is_object()) {
-			continue;
-		}
-
-		remote_playlist_sync_result local_playlist;
-		local_playlist.remote_id = playlist_id;
-		local_playlist.name = json_get_string(*playlist_it, "name");
-		if (local_playlist.name.is_empty()) {
-			local_playlist.name = playlist_name;
-		}
-
-		for_each_member_item(
-			*playlist_it, "entry", [&](const json &entry_node) {
-				const auto entry = parse_track_metadata(entry_node);
-				if (!entry.is_valid()) {
-					return;
-				}
-
-				append_handle(local_playlist.handles, entry);
-				merge_unique_metadata(playlist_metadata_entries, metadata_index,
-									  entry);
-			});
-
-		playlists.push_back(std::move(local_playlist));
-	}
-
-	return playlists;
+	// Delegate to extracted orchestration function
+	return subsonic::sync::fetch_remote_playlists(ctx, playlist_metadata_entries);
 }
 
 [[nodiscard]] pfc::array_t<t_uint8> make_property_blob(const char *value) {
@@ -937,9 +737,49 @@ void apply_sync_outcome(const sync_outcome &outcome) {
 	}
 }
 
+// ============================================================================
+// Generic Lambda-based Threaded Process Callbacks
+// Replaces boilerplate callback classes (Phase 4.5)
+// ============================================================================
+
+template <typename RunFunc, typename DoneFunc>
+class lambda_threaded_process_callback : public threaded_process_callback {
+  public:
+	lambda_threaded_process_callback(RunFunc &&run_func, DoneFunc &&done_func)
+		: m_run_func(std::forward<RunFunc>(run_func)),
+		  m_done_func(std::forward<DoneFunc>(done_func)) {}
+
+	void on_init(HWND) override {}
+
+	void run(threaded_process_status &status, abort_callback &abort) override {
+		m_run_func(status, abort);
+	}
+
+	void on_done(HWND wnd, bool was_aborted) override {
+		m_done_func(wnd, was_aborted);
+	}
+
+  private:
+	RunFunc m_run_func;
+	DoneFunc m_done_func;
+};
+
+// Helper to create lambda callback - reduces boilerplate from 80 lines → 10 lines
+template <typename RunFunc, typename DoneFunc>
+service_ptr_t<threaded_process_callback>
+make_threaded_callback(RunFunc &&run_func, DoneFunc &&done_func) {
+	return fb2k::service_new<lambda_threaded_process_callback<RunFunc, DoneFunc>>(
+		std::forward<RunFunc>(run_func), std::forward<DoneFunc>(done_func));
+}
+
+// ============================================================================
+// Legacy Callback Classes (to be replaced with make_threaded_callback)
+// ============================================================================
+
 class sync_process_callback : public threaded_process_callback {
   public:
-	sync_process_callback(sync_mode mode) : m_mode(mode) {}
+	sync_process_callback(sync_mode mode, sync_guard &&guard)
+		: m_mode(mode), m_guard(std::move(guard)) {}
 
 	void on_init(HWND p_wnd) override {}
 
@@ -955,7 +795,7 @@ class sync_process_callback : public threaded_process_callback {
 	}
 
 	void on_done(HWND p_wnd, bool p_was_aborted) override {
-		g_sync_in_progress = false;
+		// sync_guard destructor automatically resets g_sync_in_progress
 		if (p_was_aborted || m_aborted)
 			return;
 
@@ -981,6 +821,7 @@ class sync_process_callback : public threaded_process_callback {
 
   private:
 	sync_mode m_mode;
+	sync_guard m_guard; // RAII: automatically releases on destruction
 	sync_outcome m_outcome;
 	bool m_aborted = false;
 	pfc::string8 m_error_msg;
@@ -988,6 +829,9 @@ class sync_process_callback : public threaded_process_callback {
 
 class clear_cache_process_callback : public threaded_process_callback {
   public:
+	explicit clear_cache_process_callback(sync_guard &&guard)
+		: m_guard(std::move(guard)) {}
+
 	void on_init(HWND p_wnd) override {}
 
 	void run(threaded_process_status &p_status,
@@ -1009,7 +853,7 @@ class clear_cache_process_callback : public threaded_process_callback {
 	}
 
 	void on_done(HWND p_wnd, bool p_was_aborted) override {
-		g_sync_in_progress = false;
+		// sync_guard destructor automatically resets g_sync_in_progress
 		if (p_was_aborted || m_aborted)
 			return;
 
@@ -1037,12 +881,16 @@ class clear_cache_process_callback : public threaded_process_callback {
 	}
 
   private:
+	sync_guard m_guard; // RAII: automatically releases on destruction
 	bool m_aborted = false;
 	pfc::string8 m_error_msg;
 };
 
 class clear_artwork_cache_process_callback : public threaded_process_callback {
   public:
+	explicit clear_artwork_cache_process_callback(sync_guard &&guard)
+		: m_guard(std::move(guard)) {}
+
 	void on_init(HWND p_wnd) override {}
 
 	void run(threaded_process_status &p_status,
@@ -1076,7 +924,7 @@ class clear_artwork_cache_process_callback : public threaded_process_callback {
 	}
 
 	void on_done(HWND p_wnd, bool p_was_aborted) override {
-		g_sync_in_progress = false;
+		// sync_guard destructor automatically resets g_sync_in_progress
 		if (p_was_aborted || m_aborted)
 			return;
 
@@ -1094,14 +942,15 @@ class clear_artwork_cache_process_callback : public threaded_process_callback {
 	}
 
   private:
+	sync_guard m_guard; // RAII: automatically releases on destruction
 	bool m_aborted = false;
 	pfc::string8 m_error_msg;
 };
 
 class cache_artwork_process_callback : public threaded_process_callback {
   public:
-	explicit cache_artwork_process_callback(metadb_handle_list items)
-		: m_items(std::move(items)) {}
+	cache_artwork_process_callback(metadb_handle_list items, sync_guard &&guard)
+		: m_items(std::move(items)), m_guard(std::move(guard)) {}
 
 	void on_init(HWND p_wnd) override {}
 
@@ -1120,7 +969,7 @@ class cache_artwork_process_callback : public threaded_process_callback {
 	}
 
 	void on_done(HWND p_wnd, bool p_was_aborted) override {
-		g_sync_in_progress = false;
+		// sync_guard destructor automatically resets g_sync_in_progress
 		if (p_was_aborted || m_aborted)
 			return;
 
@@ -1145,19 +994,21 @@ class cache_artwork_process_callback : public threaded_process_callback {
 
   private:
 	metadb_handle_list m_items;
+	sync_guard m_guard; // RAII: automatically releases on destruction
 	subsonic::artwork::prefetch_artwork_result m_result;
 	bool m_aborted = false;
 	pfc::string8 m_error_msg;
 };
 
 void launch_sync(sync_mode mode) {
-	if (g_sync_in_progress.exchange(true)) {
+	sync_guard guard;
+	if (!guard.try_acquire()) {
 		popup_message::g_show("An OpenSubsonic sync is already running.",
 							  "foo_opensubsonic");
 		return;
 	}
 	threaded_process::g_run_modeless(
-		new service_impl_t<sync_process_callback>(mode),
+		new service_impl_t<sync_process_callback>(mode, std::move(guard)),
 		threaded_process::flag_show_progress |
 			threaded_process::flag_show_abort |
 			threaded_process::flag_show_item,
@@ -1165,13 +1016,14 @@ void launch_sync(sync_mode mode) {
 }
 
 void launch_clear_cache() {
-	if (g_sync_in_progress.exchange(true)) {
+	sync_guard guard;
+	if (!guard.try_acquire()) {
 		popup_message::g_show("An OpenSubsonic job is already running.",
 							  "foo_opensubsonic");
 		return;
 	}
 	threaded_process::g_run_modeless(
-		new service_impl_t<clear_cache_process_callback>(),
+		new service_impl_t<clear_cache_process_callback>(std::move(guard)),
 		threaded_process::flag_show_progress |
 			threaded_process::flag_show_abort |
 			threaded_process::flag_show_item,
@@ -1179,7 +1031,8 @@ void launch_clear_cache() {
 }
 
 void launch_cache_artwork() {
-	if (g_sync_in_progress.exchange(true)) {
+	sync_guard guard;
+	if (!guard.try_acquire()) {
 		popup_message::g_show("An OpenSubsonic job is already running.",
 							  "foo_opensubsonic");
 		return;
@@ -1189,13 +1042,13 @@ void launch_cache_artwork() {
 		auto items = load_library_playlist_items();
 		threaded_process::g_run_modeless(
 			new service_impl_t<cache_artwork_process_callback>(
-				std::move(items)),
+				std::move(items), std::move(guard)),
 			threaded_process::flag_show_progress |
 				threaded_process::flag_show_abort |
 				threaded_process::flag_show_item,
 			core_api::get_main_window(), "OpenSubsonic Status");
 	} catch (const std::exception &e) {
-		g_sync_in_progress = false;
+		// guard destructor automatically releases lock
 		popup_message::g_show(PFC_string_formatter()
 								  << "Cache artwork failed:\n"
 								  << e.what(),
@@ -1204,14 +1057,15 @@ void launch_cache_artwork() {
 }
 
 void launch_clear_artwork_cache() {
-	if (g_sync_in_progress.exchange(true)) {
+	sync_guard guard;
+	if (!guard.try_acquire()) {
 		popup_message::g_show("An OpenSubsonic job is already running.",
 							  "foo_opensubsonic");
 		return;
 	}
 
 	threaded_process::g_run_modeless(
-		new service_impl_t<clear_artwork_cache_process_callback>(),
+		new service_impl_t<clear_artwork_cache_process_callback>(std::move(guard)),
 		threaded_process::flag_show_progress |
 			threaded_process::flag_show_abort |
 			threaded_process::flag_show_item,
