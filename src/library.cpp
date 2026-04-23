@@ -6,6 +6,7 @@
 #include "cache.h"
 #include "config.h"
 #include "http.h"
+#include "library_sync_engine.h"
 #include "metadata.h"
 #include "sync_types.h"
 #include "utils/subsonic_json_parser.h"
@@ -207,54 +208,13 @@ make_query_params(std::initializer_list<subsonic::query_param> params) {
 
 [[nodiscard]] subsonic::cached_track_metadata
 parse_track_metadata(const json &song) {
-	subsonic::cached_track_metadata entry;
-	entry.track_id = subsonic::json_parser::get_string(song, "id");
-	entry.artist = subsonic::json_parser::get_string(song, "artist");
-	entry.title = subsonic::json_parser::get_string(song, "title");
-	entry.album = subsonic::json_parser::get_string(song, "album");
-	entry.cover_art_id = subsonic::json_parser::get_string(song, "coverArt");
-	entry.stream_mime_type = subsonic::json_parser::get_string(song, "contentType");
-	entry.suffix = subsonic::json_parser::get_string(song, "suffix");
-	entry.duration_seconds = subsonic::json_parser::get_number(song, "duration");
-	entry.track_number = subsonic::json_parser::get_string(song, "track");
-	entry.disc_number = subsonic::json_parser::get_string(song, "discNumber");
-	entry.year = subsonic::json_parser::get_string(song, "year");
-	entry.genre = subsonic::json_parser::get_string(song, "genre");
-	entry.bitrate = subsonic::json_parser::get_string(song, "bitRate");
-
-	if (song.is_object()) {
-		entry.extra_fields.reserve(song.size());
-		for (auto it = song.begin(); it != song.end(); ++it) {
-			const auto value = subsonic::json_parser::to_metadata_string(it.value());
-			if (value.is_empty()) {
-				continue;
-			}
-
-			subsonic::track_metadata_field field;
-			field.key = it.key().c_str();
-			field.value = value;
-			entry.extra_fields.push_back(std::move(field));
-		}
-	}
-
-	return entry;
+	return subsonic::sync::parse_track_metadata(song);
 }
 
 void merge_unique_metadata(std::vector<subsonic::cached_track_metadata> &target,
 						   std::unordered_map<std::string, size_t> &index,
 						   const subsonic::cached_track_metadata &entry) {
-	if (!entry.is_valid()) {
-		return;
-	}
-
-	const std::string key = entry.track_id.c_str();
-	const auto found = index.find(key);
-	if (found == index.end()) {
-		index.emplace(key, target.size());
-		target.push_back(entry);
-	} else {
-		target[found->second] = entry;
-	}
+	subsonic::sync::merge_unique_metadata(target, index, entry);
 }
 
 void append_handle(metadb_handle_list &handles,
@@ -279,9 +239,9 @@ void set_library_fetch_status(threaded_process_status &status,
 [[nodiscard]] std::vector<artist_sync_plan>
 build_artist_sync_plan(const subsonic::server_credentials &credentials,
 					   threaded_process_status &status, abort_callback &abort) {
-	std::vector<artist_sync_plan> plans;
-	std::unordered_map<std::string, size_t> artist_index;
+	std::vector<album_sync_summary> all_albums;
 
+	// Fetch all albums with pagination
 	for (size_t offset = 0;; offset += k_album_list_page_size) {
 		abort.check();
 
@@ -307,13 +267,9 @@ build_artist_sync_plan(const subsonic::server_credentials &credentials,
 		std::vector<album_sync_summary> page_albums;
 		subsonic::json_parser::for_each_member_item(
 			*album_list_it, "album", [&](const json &album_node) {
-				album_sync_summary summary;
-				summary.album_id = subsonic::json_parser::get_string(album_node, "id");
-				summary.artist_id = subsonic::json_parser::get_string(album_node, "artistId");
-				summary.artist_name = subsonic::json_parser::get_string(album_node, "artist");
-				summary.track_count = json_get_size_t(album_node, "songCount");
+				const auto summary = subsonic::sync::parse_album_summary(album_node);
 				if (!summary.album_id.is_empty()) {
-					page_albums.push_back(std::move(summary));
+					page_albums.push_back(summary);
 				}
 			});
 
@@ -321,43 +277,15 @@ build_artist_sync_plan(const subsonic::server_credentials &credentials,
 			break;
 		}
 
-		for (auto &album : page_albums) {
-			std::string key = album.artist_id.is_empty()
-								  ? std::string(album.artist_name.c_str())
-								  : std::string(album.artist_id.c_str());
-			if (key.empty()) {
-				key = "<unknown-artist>";
-			}
-
-			const auto found = artist_index.find(key);
-			if (found == artist_index.end()) {
-				artist_sync_plan plan;
-				plan.artist_id = album.artist_id;
-				plan.artist_name = album.artist_name;
-				plan.albums.push_back(album);
-				plan.total_track_count += album.track_count;
-
-				artist_index.emplace(std::move(key), plans.size());
-				plans.push_back(std::move(plan));
-			} else {
-				auto &plan = plans[found->second];
-				if (plan.artist_name.is_empty()) {
-					plan.artist_name = album.artist_name;
-				}
-				if (plan.artist_id.is_empty()) {
-					plan.artist_id = album.artist_id;
-				}
-				plan.total_track_count += album.track_count;
-				plan.albums.push_back(album);
-			}
-		}
+		all_albums.insert(all_albums.end(), page_albums.begin(), page_albums.end());
 
 		if (page_albums.size() < k_album_list_page_size) {
 			break;
 		}
 	}
 
-	return plans;
+	// Group albums by artist (pure function, no HTTP/UI)
+	return subsonic::sync::group_albums_by_artist(all_albums);
 }
 
 [[nodiscard]] library_sync_result

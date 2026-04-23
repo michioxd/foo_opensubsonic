@@ -270,6 +270,7 @@
     <ClInclude Include="config.h" />
     <ClInclude Include="http.h" />
     <ClInclude Include="library.h" />
+    <ClInclude Include="library_sync_engine.h" />
     <ClInclude Include="metadata.h" />
     <ClInclude Include="playback.h" />
     <ClInclude Include="resource.h" />
@@ -293,6 +294,7 @@
     <ClCompile Include="foo_opensubsonic.cpp" />
     <ClCompile Include="http.cpp" />
     <ClCompile Include="library.cpp" />
+    <ClCompile Include="library_sync_engine.cpp" />
     <ClCompile Include="metadata.cpp" />
     <ClCompile Include="playback.cpp" />
     <ClCompile Include="preferences.cpp" />
