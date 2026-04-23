@@ -1,6 +1,7 @@
 #include "../stdafx.h"
 
 #include "utils.h"
+#include "crypto_util.h"
 #include "string_util.h"
 
 namespace {
@@ -85,24 +86,18 @@ bool extract_track_id_from_path(const char *path,
 	return out_track_id.length() > 0;
 }
 
+// Crypto utilities moved to crypto_util.h/cpp
+
 pfc::string8 generate_salt() {
-	pfc::string8 salt = pfc::print_guid(pfc::createGUID());
-	salt.replace_string("{", "");
-	salt.replace_string("}", "");
-	salt.replace_string("-", "");
-	return salt;
+	return crypto_util::generate_salt();
 }
 
 pfc::string8 md5_hex(const char *text) {
-	const auto hash = static_api_ptr_t<hasher_md5>()->process_single_string(
-		text != nullptr ? text : "");
-	return pfc::format_hexdump_lowercase(hash.m_data, sizeof(hash.m_data), "");
+	return crypto_util::md5_hex(text);
 }
 
 pfc::string8 make_auth_token(const char *password, const char *salt) {
-	pfc::string8 input = password != nullptr ? password : "";
-	input += salt != nullptr ? salt : "";
-	return md5_hex(input);
+	return crypto_util::make_auth_token(password, salt);
 }
 
 void append_query_param(pfc::string_base &query, const char *key,
