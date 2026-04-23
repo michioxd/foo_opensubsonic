@@ -3,8 +3,10 @@
 #include "library_sync_engine.h"
 #include "utils/subsonic_json_parser.h"
 #include "utils/track_path_util.h"
+#include "utils/utils.h"
 
 #include <string>
+#include <unordered_set>
 
 namespace subsonic {
 namespace sync {
@@ -26,17 +28,30 @@ parse_track_metadata(const nlohmann::json &song) {
 	entry.genre = json_parser::get_string(song, "genre");
 	entry.bitrate = json_parser::get_string(song, "bitRate");
 
-	// Parse extra fields for extensibility
+	// Parse extra fields for extensibility (skip fields already in struct)
 	if (song.is_object()) {
+		// Skip these keys - already parsed into struct members
+		static const std::unordered_set<std::string> known_fields = {
+			"id", "artist", "title", "album", "coverArt", "contentType",
+			"suffix", "duration", "track", "discNumber", "year", "genre", "bitRate"
+		};
+
 		entry.extra_fields.reserve(song.size());
 		for (auto it = song.begin(); it != song.end(); ++it) {
+			const std::string& key = it.key();
+
+			// Skip known fields to avoid duplication
+			if (known_fields.find(key) != known_fields.end()) {
+				continue;
+			}
+
 			const auto value = json_parser::to_metadata_string(it.value());
 			if (value.is_empty()) {
 				continue;
 			}
 
 			track_metadata_field field;
-			field.key = it.key().c_str();
+			field.key = key.c_str();
 			field.value = value;
 			entry.extra_fields.push_back(std::move(field));
 		}
@@ -83,14 +98,21 @@ group_albums_by_artist(const std::vector<album_sync_summary> &albums) {
 	std::vector<artist_sync_plan> plans;
 	std::unordered_map<std::string, size_t> artist_index;
 
+	size_t unknown_counter = 0; // Counter for unknown artists
+
 	for (const auto &album : albums) {
-		// Generate unique artist key
-		// Prefer artist_id, fall back to artist_name, then unknown
-		std::string key = album.artist_id.is_empty()
-							  ? std::string(album.artist_name.c_str())
-							  : std::string(album.artist_id.c_str());
-		if (key.empty()) {
-			key = "<unknown-artist>";
+		// Generate unique artist key with namespace to prevent collisions
+		// Namespace ensures artist_id="X" and artist_name="X" don't collide
+		std::string key;
+		if (!album.artist_id.is_empty()) {
+			// Prefix with "id:" for artist_id
+			key = "id:" + std::string(album.artist_id.c_str());
+		} else if (!album.artist_name.is_empty()) {
+			// Prefix with "name:" for artist_name
+			key = "name:" + std::string(album.artist_name.c_str());
+		} else {
+			// Unique key for each unknown artist
+			key = "unknown:" + std::to_string(unknown_counter++);
 		}
 
 		const auto found = artist_index.find(key);
@@ -230,15 +252,16 @@ fetch_remote_playlists(sync_context &ctx,
 		ctx.set_progress_text(PFC_string_formatter()
 							  << "Fetching playlist: " << playlist_name);
 
-		// Fetch playlist detail
-		std::vector<query_param> params;
-		params.push_back(query_param(pfc::string8("id"), playlist_id));
-		const auto playlist_root =
-			ctx.http_client->fetch_api("getPlaylist.view", params, *ctx.abort);
-		const auto playlist_it = playlist_root.find("playlist");
-		if (playlist_it == playlist_root.end() || !playlist_it->is_object()) {
-			continue;
-		}
+		try {
+			// Fetch playlist detail
+			std::vector<query_param> params;
+			params.push_back(query_param(pfc::string8("id"), playlist_id));
+			const auto playlist_root =
+				ctx.http_client->fetch_api("getPlaylist.view", params, *ctx.abort);
+			const auto playlist_it = playlist_root.find("playlist");
+			if (playlist_it == playlist_root.end() || !playlist_it->is_object()) {
+				continue;
+			}
 
 		// Parse playlist metadata
 		remote_playlist_sync_result local_playlist;
@@ -268,7 +291,18 @@ fetch_remote_playlists(sync_context &ctx,
 									  entry);
 			});
 
-		playlists.push_back(std::move(local_playlist));
+			playlists.push_back(std::move(local_playlist));
+
+		} catch (const exception_aborted &) {
+			// User abort - rethrow to stop entire sync
+			throw;
+		} catch (const std::exception &e) {
+			// Network/JSON/API error - log and continue to next playlist
+			subsonic::log_error("playlist_sync",
+				PFC_string_formatter() << "Failed to fetch playlist '"
+				<< playlist_name << "' (id: " << playlist_id << "): " << e.what());
+			// Continue to next playlist - partial success preserved
+		}
 	}
 
 	return playlists;

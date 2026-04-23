@@ -289,9 +289,18 @@ try_get_artwork_data_from_cache(const char *path,
 		return false;
 	}
 
+	// Check if cached data is valid before using
+	if (!found->second.data.is_valid()) {
+		// Invalid entry - remove from cache and return failure
+		g_artwork_data_cache_total_bytes -= found->second.size_bytes;
+		g_artwork_data_cache.erase(found);
+		return false;
+	}
+
+	// Valid entry - update access time and return
 	out_data = found->second.data;
 	found->second.last_access_time = now;
-	return out_data.is_valid();
+	return true;
 }
 
 // Evict least recently used entries to make room for new_size_bytes
