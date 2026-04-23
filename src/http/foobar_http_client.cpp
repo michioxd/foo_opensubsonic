@@ -6,6 +6,7 @@
 #include "../utils/utils.h"
 
 #include <stdexcept>
+#include <utility>
 
 // foobar_http_client wraps existing http.cpp functions with IHttpClient interface
 //
@@ -15,20 +16,23 @@
 //   - Same error handling, same exceptions, same parsing
 //   - No new bugs introduced - just moved to class method
 //
+// Lifetime: Safe for long-lived use in service_locator
+//   - Credentials stored by value (no dangling reference)
+//   - abort_callback passed per-request (proper cancellation scope)
+//
 // See library.cpp lines 164-203 for original implementation
-// See foobar_http_client_test.cpp for detailed comparison
 
 namespace subsonic {
 
-foobar_http_client::foobar_http_client(const server_credentials &credentials,
-									   abort_callback &abort) noexcept
-	: m_credentials(credentials), m_abort(abort) {}
+foobar_http_client::foobar_http_client(server_credentials credentials) noexcept
+	: m_credentials(std::move(credentials)) {}
 
 [[nodiscard]] nlohmann::json
 foobar_http_client::fetch_api(const char *endpoint,
-							   const std::vector<query_param> &params) {
+							   const std::vector<query_param> &params,
+							   abort_callback &abort) {
 	// Use existing http::open_api function
-	const auto response = http::open_api(m_credentials, endpoint, m_abort, params);
+	const auto response = http::open_api(m_credentials, endpoint, abort, params);
 
 	// Check HTTP status
 	if (!http::status_is_success(response)) {
@@ -39,7 +43,7 @@ foobar_http_client::fetch_api(const char *endpoint,
 	}
 
 	// Read response body
-	const auto body = http::read_text(response, m_abort);
+	const auto body = http::read_text(response, abort);
 
 	// Parse JSON
 	nlohmann::json document = nlohmann::json::parse(body.c_str());
@@ -68,17 +72,18 @@ foobar_http_client::fetch_api(const char *endpoint,
 	return root;
 }
 
-[[nodiscard]] http_response foobar_http_client::get(const char *url) {
+[[nodiscard]] http_response foobar_http_client::get(const char *url,
+													 abort_callback &abort) {
 	http_response result;
 
 	try {
 		// Use existing http functions
-		const auto response = http::open(url, m_abort);
+		const auto response = http::open(url, abort);
 
 		result.status_code = 200; // Assume success if no exception
 		result.status_text = response.status_text;
 		result.success = http::status_is_success(response);
-		result.body = http::read_text(response, m_abort);
+		result.body = http::read_text(response, abort);
 	} catch (const std::exception &e) {
 		result.success = false;
 		result.status_code = 500;
@@ -89,9 +94,10 @@ foobar_http_client::fetch_api(const char *endpoint,
 }
 
 [[nodiscard]] std::vector<uint8_t>
-foobar_http_client::get_binary(const char *url, size_t max_bytes) {
+foobar_http_client::get_binary(const char *url, size_t max_bytes,
+							   abort_callback &abort) {
 	// Use existing http functions
-	const auto response = http::open(url, m_abort);
+	const auto response = http::open(url, abort);
 
 	if (!http::status_is_success(response)) {
 		throw std::runtime_error(PFC_string_formatter()
@@ -101,15 +107,17 @@ foobar_http_client::get_binary(const char *url, size_t max_bytes) {
 
 	// Read binary data directly to vector
 	std::vector<uint8_t> data;
+	data.reserve(max_bytes); // Pre-allocate to avoid reallocations
+
 	const size_t chunk_size = 64 * 1024; // 64KB chunks
 	uint8_t buffer[64 * 1024];
 
 	size_t total_read = 0;
 	while (total_read < max_bytes) {
-		m_abort.check();
+		abort.check();
 
 		const size_t to_read = (std::min)(chunk_size, max_bytes - total_read);
-		const size_t bytes_read = response.stream->read(buffer, to_read, m_abort);
+		const size_t bytes_read = response.stream->read(buffer, to_read, abort);
 
 		if (bytes_read == 0) {
 			break; // EOF

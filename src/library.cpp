@@ -241,11 +241,12 @@ void set_library_fetch_status(threaded_process_status &status,
 build_artist_sync_plan(const subsonic::server_credentials &credentials,
 					   threaded_process_status &status, abort_callback &abort) {
 	// Create HTTP client (Stage 5: IHttpClient interface)
-	subsonic::foobar_http_client http_client(credentials, abort);
+	subsonic::foobar_http_client http_client(credentials);
 
 	// Create sync context with injected dependencies
 	subsonic::sync::sync_context ctx;
 	ctx.http_client = &http_client;
+	ctx.abort = &abort;
 
 	// Progress callbacks
 	ctx.set_progress_text = [&](const char *message) {
@@ -369,11 +370,12 @@ fetch_library_sync_result(const subsonic::server_credentials &credentials,
 	std::vector<subsonic::cached_track_metadata> &playlist_metadata_entries,
 	threaded_process_status &status, abort_callback &abort) {
 	// Create HTTP client (Stage 5: IHttpClient interface)
-	subsonic::foobar_http_client http_client(credentials, abort);
+	subsonic::foobar_http_client http_client(credentials);
 
 	// Create sync context with injected dependencies
 	subsonic::sync::sync_context ctx;
 	ctx.http_client = &http_client;
+	ctx.abort = &abort;
 
 	// Progress callbacks
 	ctx.set_progress_text = [&](const char *message) {

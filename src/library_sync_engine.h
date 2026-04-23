@@ -54,7 +54,8 @@ using abort_check_callback = std::function<void()>;
 // Sync context - bundles HTTP client and UI callbacks
 // HTTP now uses IHttpClient interface instead of callback
 struct sync_context {
-	IHttpClient *http_client = nullptr; // Injected HTTP client (interface)
+	IHttpClient *http_client = nullptr;	  // Injected HTTP client (interface)
+	abort_callback *abort = nullptr;	   // Per-request cancellation
 	progress_callback set_progress_text;
 	progress_numeric_callback set_progress_numeric;
 	abort_check_callback check_abort;

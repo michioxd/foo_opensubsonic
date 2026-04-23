@@ -159,7 +159,8 @@ build_artist_sync_plan(sync_context &ctx) {
 		params.push_back(query_param(pfc::string8("offset"), format_size(offset)));
 
 		// Fetch via HTTP client interface
-		const auto album_list_root = ctx.http_client->fetch_api("getAlbumList2.view", params);
+		const auto album_list_root =
+			ctx.http_client->fetch_api("getAlbumList2.view", params, *ctx.abort);
 
 		const auto album_list_it = album_list_root.find("albumList2");
 		if (album_list_it == album_list_root.end() ||
@@ -203,7 +204,8 @@ fetch_remote_playlists(sync_context &ctx,
 
 	// Fetch playlist list
 	ctx.set_progress_text("Fetching playlist summaries...");
-	const auto playlists_root = ctx.http_client->fetch_api("getPlaylists.view", {});
+	const auto playlists_root =
+		ctx.http_client->fetch_api("getPlaylists.view", {}, *ctx.abort);
 	const auto playlists_it = playlists_root.find("playlists");
 	if (playlists_it == playlists_root.end() || !playlists_it->is_object()) {
 		return playlists;
@@ -232,7 +234,8 @@ fetch_remote_playlists(sync_context &ctx,
 		// Fetch playlist detail
 		std::vector<query_param> params;
 		params.push_back(query_param(pfc::string8("id"), playlist_id));
-		const auto playlist_root = ctx.http_client->fetch_api("getPlaylist.view", params);
+		const auto playlist_root =
+			ctx.http_client->fetch_api("getPlaylist.view", params, *ctx.abort);
 		const auto playlist_it = playlist_root.find("playlist");
 		if (playlist_it == playlist_root.end() || !playlist_it->is_object()) {
 			continue;
