@@ -1,7 +1,8 @@
 #pragma once
 
+#include <SDK/foobar2000.h>
+
 #include <nlohmann/json.hpp>
-#include <pfc/string8.h>
 #include <functional>
 
 namespace subsonic {

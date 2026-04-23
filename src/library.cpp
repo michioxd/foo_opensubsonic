@@ -241,7 +241,7 @@ parse_track_metadata(const json &song) {
 	entry.cover_art_id = subsonic::json_parser::get_string(song, "coverArt");
 	entry.stream_mime_type = subsonic::json_parser::get_string(song, "contentType");
 	entry.suffix = subsonic::json_parser::get_string(song, "suffix");
-	entry.duration_seconds = json_get_number(song, "duration");
+	entry.duration_seconds = subsonic::json_parser::get_number(song, "duration");
 	entry.track_number = subsonic::json_parser::get_string(song, "track");
 	entry.disc_number = subsonic::json_parser::get_string(song, "discNumber");
 	entry.year = subsonic::json_parser::get_string(song, "year");

@@ -303,12 +303,24 @@
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|ARM64EC'">Create</PrecompiledHeader>
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|ARM64'">Create</PrecompiledHeader>
     </ClCompile>
-    <ClCompile Include="utils\crypto_util.cpp" />
-    <ClCompile Include="utils\string_util.cpp" />
-    <ClCompile Include="utils\subsonic_json_parser.cpp" />
-    <ClCompile Include="utils\metadata_utils.cpp" />
-    <ClCompile Include="utils\time_utils.cpp" />
-    <ClCompile Include="utils\utils.cpp" />
+    <ClCompile Include="utils\crypto_util.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="utils\string_util.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="utils\subsonic_json_parser.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="utils\metadata_utils.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="utils\time_utils.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="utils\utils.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
     <ClCompile Include="vfs.cpp" />
   </ItemGroup>
   <ItemGroup>

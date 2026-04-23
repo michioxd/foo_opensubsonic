@@ -1,5 +1,7 @@
 #pragma once
 
+#include <SDK/foobar2000.h>
+
 namespace subsonic {
 namespace string_util {
 

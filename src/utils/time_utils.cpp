@@ -1,4 +1,4 @@
-#include "../stdafx.h"
+// PCH disabled for utils folder
 
 #include "time_utils.h"
 
