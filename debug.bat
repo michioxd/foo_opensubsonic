@@ -21,7 +21,7 @@ echo Closing foobar2000 if it's running...
 
 taskkill /IM "foobar2000.exe" /F >nul 2>&1
 
-timeout /t 2 >nul
+timeout /t 1 /nobreak >nul
 
 copy /Y ".\x64\Debug\foo_opensubsonic.dll" "%appdata%\foobar2000-v2\user-components-x64\foo_opensubsonic\foo_opensubsonic.dll"
 
