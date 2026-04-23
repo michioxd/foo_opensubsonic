@@ -9,6 +9,9 @@
 namespace subsonic {
 namespace sync {
 
+// Shared constants for sync operations
+inline constexpr size_t k_album_list_page_size = 500;
+
 // Result of library sync operation
 // Contains all synced track metadata and corresponding metadb handles
 struct library_sync_result {

@@ -136,8 +136,7 @@ using subsonic::sync::artist_sync_plan;
 using subsonic::sync::remote_playlist_sync_result;
 using subsonic::sync::sync_outcome;
 using subsonic::sync::sync_mode;
-
-constexpr size_t k_album_list_page_size = 500;
+using subsonic::sync::k_album_list_page_size;
 
 [[nodiscard]] pfc::string8 make_remote_playlist_name(const char *name) {
 	pfc::string8 out = k_remote_playlist_prefix;

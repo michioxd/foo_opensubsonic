@@ -25,6 +25,11 @@
 
 namespace subsonic {
 
+namespace {
+// HTTP status codes
+constexpr int k_http_status_internal_error = 500;
+} // namespace
+
 foobar_http_client::foobar_http_client(server_credentials credentials) noexcept
 	: m_credentials(std::move(credentials)) {}
 
@@ -93,7 +98,7 @@ foobar_http_client::fetch_api(const char *endpoint,
 	} catch (const std::exception &e) {
 		// Non-abort errors (network failure, parse error, etc.)
 		result.success = false;
-		result.status_code = 500; // Fallback for generic errors
+		result.status_code = k_http_status_internal_error;
 		result.status_text = e.what();
 	}
 

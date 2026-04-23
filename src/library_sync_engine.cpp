@@ -127,7 +127,6 @@ group_albums_by_artist(const std::vector<album_sync_summary> &albums) {
 // ============================================================================
 
 namespace {
-constexpr size_t k_album_list_page_size = 500;
 
 [[nodiscard]] pfc::string8 format_size(size_t value) {
 	return PFC_string_formatter() << value;

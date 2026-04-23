@@ -358,7 +358,6 @@ void remove_info_for_handles(metadb_handle_list handles,
 void dispatch_refresh_for_track_ids(
 	const std::vector<subsonic::cached_track_metadata> &entries) {
 	metadb_handle_list handles;
-	handles.remove_all();
 
 	for (const auto &entry : entries) {
 		if (!entry.is_valid()) {

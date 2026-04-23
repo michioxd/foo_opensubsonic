@@ -24,7 +24,7 @@ static const GUID guid_subsonic_album_art_extractor = {
 	{0xa0, 0xd4, 0x66, 0x6c, 0x94, 0x39, 0x5d, 0xa1}};
 
 constexpr size_t k_max_artwork_bytes = 32 * 1024 * 1024;
-constexpr std::uint64_t k_cache_touch_interval_ms = 5ull * 60ull * 1000ull;
+constexpr std::uint64_t k_cache_touch_interval_ms = 5ull * 60ull * 1000ull; // 5 minutes
 
 // LRU cache settings for decoded artwork (in-memory)
 constexpr size_t k_lru_cache_max_entries = 100; // Cache up to 100 artworks
@@ -256,9 +256,6 @@ make_artwork_cache_path_from_hash(const char *content_hash,
 	path.add_filename(file_name.c_str());
 	return path;
 }
-
-// Removed: duplicate of time_utils::current_unix_time_ms()
-// Now using subsonic::time_utils::current_unix_time_ms() instead
 
 [[nodiscard]] pfc::string8 hash_artwork_bytes(const void *data, t_size size) {
 	const auto hash =
