@@ -395,6 +395,12 @@ void hint_metadata_async(const subsonic::cached_track_metadata &entry) {
 	static_api_ptr_t<metadb_io>()->hint_async(handle, info, fake_stats, true);
 }
 
+// Snapshot = In-memory cache of track metadata (g_track_metadata map)
+// Synchronized from server during library sync
+// Provides fast lookups without hitting persistent storage
+
+// Replace entire in-memory cache with new entries
+// REQUIRES: Caller must NOT hold g_track_metadata_mutex (function acquires it)
 void replace_snapshot_locked(
 	const std::vector<subsonic::cached_track_metadata> &entries) {
 	std::unordered_map<std::string, subsonic::cached_track_metadata> next;
@@ -411,6 +417,8 @@ void replace_snapshot_locked(
 	g_track_metadata = std::move(next);
 }
 
+// Insert or update single entry in in-memory cache
+// Thread-safe: acquires g_track_metadata_mutex
 void upsert_snapshot(const subsonic::cached_track_metadata &entry) {
 	if (!entry.is_valid()) {
 		return;
@@ -420,6 +428,8 @@ void upsert_snapshot(const subsonic::cached_track_metadata &entry) {
 	g_track_metadata.insert_or_assign(make_track_key(entry.track_id), entry);
 }
 
+// Remove single entry from in-memory cache
+// Thread-safe: acquires g_track_metadata_mutex
 void remove_snapshot(const char *track_id) {
 	const auto key = make_track_key(track_id);
 	if (key.empty()) {
@@ -430,6 +440,9 @@ void remove_snapshot(const char *track_id) {
 	g_track_metadata.erase(key);
 }
 
+// Get metadata from in-memory cache
+// Thread-safe: acquires g_track_metadata_mutex (shared lock for read)
+// Returns false if track_id not found
 [[nodiscard]] bool try_get_snapshot(const char *track_id,
 									subsonic::cached_track_metadata &out) {
 	out = {};

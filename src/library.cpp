@@ -65,7 +65,65 @@ const GUID guid_playlist_property_remote_id = {
 	0x4330,
 	{0xbf, 0x3a, 0xb7, 0xbb, 0x03, 0x59, 0x9f, 0x1d}};
 
-std::atomic_bool g_sync_in_progress = false;
+// Mutex to guard sync operations (library sync, playlist sync, cache operations)
+// Prevents concurrent sync jobs which could corrupt cache state
+std::mutex g_sync_mutex;
+bool g_sync_in_progress = false; // Protected by g_sync_mutex
+
+// RAII guard for sync operations
+// Ensures g_sync_in_progress is always reset even if operation throws
+class sync_guard {
+	std::unique_lock<std::mutex> m_lock;
+	bool m_acquired = false;
+
+public:
+	sync_guard() = default;
+
+	// Try to acquire sync lock
+	// Returns false if another sync is already in progress
+	bool try_acquire() {
+		m_lock = std::unique_lock<std::mutex>(g_sync_mutex, std::try_to_lock);
+		if (!m_lock.owns_lock()) {
+			return false;
+		}
+		if (g_sync_in_progress) {
+			m_lock.unlock();
+			return false;
+		}
+		g_sync_in_progress = true;
+		m_acquired = true;
+		return true;
+	}
+
+	~sync_guard() {
+		if (m_acquired && m_lock.owns_lock()) {
+			g_sync_in_progress = false;
+		}
+	}
+
+	// Non-copyable but movable
+	sync_guard(const sync_guard &) = delete;
+	sync_guard &operator=(const sync_guard &) = delete;
+
+	sync_guard(sync_guard &&other) noexcept
+		: m_lock(std::move(other.m_lock)), m_acquired(other.m_acquired) {
+		other.m_acquired = false; // Transfer ownership
+	}
+
+	sync_guard &operator=(sync_guard &&other) noexcept {
+		if (this != &other) {
+			// Release current lock if held
+			if (m_acquired && m_lock.owns_lock()) {
+				g_sync_in_progress = false;
+			}
+			// Transfer from other
+			m_lock = std::move(other.m_lock);
+			m_acquired = other.m_acquired;
+			other.m_acquired = false;
+		}
+		return *this;
+	}
+};
 
 struct library_sync_result {
 	std::vector<subsonic::cached_track_metadata> entries;
@@ -939,7 +997,8 @@ void apply_sync_outcome(const sync_outcome &outcome) {
 
 class sync_process_callback : public threaded_process_callback {
   public:
-	sync_process_callback(sync_mode mode) : m_mode(mode) {}
+	sync_process_callback(sync_mode mode, sync_guard &&guard)
+		: m_mode(mode), m_guard(std::move(guard)) {}
 
 	void on_init(HWND p_wnd) override {}
 
@@ -955,7 +1014,7 @@ class sync_process_callback : public threaded_process_callback {
 	}
 
 	void on_done(HWND p_wnd, bool p_was_aborted) override {
-		g_sync_in_progress = false;
+		// sync_guard destructor automatically resets g_sync_in_progress
 		if (p_was_aborted || m_aborted)
 			return;
 
@@ -981,6 +1040,7 @@ class sync_process_callback : public threaded_process_callback {
 
   private:
 	sync_mode m_mode;
+	sync_guard m_guard; // RAII: automatically releases on destruction
 	sync_outcome m_outcome;
 	bool m_aborted = false;
 	pfc::string8 m_error_msg;
@@ -988,6 +1048,9 @@ class sync_process_callback : public threaded_process_callback {
 
 class clear_cache_process_callback : public threaded_process_callback {
   public:
+	explicit clear_cache_process_callback(sync_guard &&guard)
+		: m_guard(std::move(guard)) {}
+
 	void on_init(HWND p_wnd) override {}
 
 	void run(threaded_process_status &p_status,
@@ -1009,7 +1072,7 @@ class clear_cache_process_callback : public threaded_process_callback {
 	}
 
 	void on_done(HWND p_wnd, bool p_was_aborted) override {
-		g_sync_in_progress = false;
+		// sync_guard destructor automatically resets g_sync_in_progress
 		if (p_was_aborted || m_aborted)
 			return;
 
@@ -1037,12 +1100,16 @@ class clear_cache_process_callback : public threaded_process_callback {
 	}
 
   private:
+	sync_guard m_guard; // RAII: automatically releases on destruction
 	bool m_aborted = false;
 	pfc::string8 m_error_msg;
 };
 
 class clear_artwork_cache_process_callback : public threaded_process_callback {
   public:
+	explicit clear_artwork_cache_process_callback(sync_guard &&guard)
+		: m_guard(std::move(guard)) {}
+
 	void on_init(HWND p_wnd) override {}
 
 	void run(threaded_process_status &p_status,
@@ -1076,7 +1143,7 @@ class clear_artwork_cache_process_callback : public threaded_process_callback {
 	}
 
 	void on_done(HWND p_wnd, bool p_was_aborted) override {
-		g_sync_in_progress = false;
+		// sync_guard destructor automatically resets g_sync_in_progress
 		if (p_was_aborted || m_aborted)
 			return;
 
@@ -1094,14 +1161,15 @@ class clear_artwork_cache_process_callback : public threaded_process_callback {
 	}
 
   private:
+	sync_guard m_guard; // RAII: automatically releases on destruction
 	bool m_aborted = false;
 	pfc::string8 m_error_msg;
 };
 
 class cache_artwork_process_callback : public threaded_process_callback {
   public:
-	explicit cache_artwork_process_callback(metadb_handle_list items)
-		: m_items(std::move(items)) {}
+	cache_artwork_process_callback(metadb_handle_list items, sync_guard &&guard)
+		: m_items(std::move(items)), m_guard(std::move(guard)) {}
 
 	void on_init(HWND p_wnd) override {}
 
@@ -1120,7 +1188,7 @@ class cache_artwork_process_callback : public threaded_process_callback {
 	}
 
 	void on_done(HWND p_wnd, bool p_was_aborted) override {
-		g_sync_in_progress = false;
+		// sync_guard destructor automatically resets g_sync_in_progress
 		if (p_was_aborted || m_aborted)
 			return;
 
@@ -1145,19 +1213,21 @@ class cache_artwork_process_callback : public threaded_process_callback {
 
   private:
 	metadb_handle_list m_items;
+	sync_guard m_guard; // RAII: automatically releases on destruction
 	subsonic::artwork::prefetch_artwork_result m_result;
 	bool m_aborted = false;
 	pfc::string8 m_error_msg;
 };
 
 void launch_sync(sync_mode mode) {
-	if (g_sync_in_progress.exchange(true)) {
+	sync_guard guard;
+	if (!guard.try_acquire()) {
 		popup_message::g_show("An OpenSubsonic sync is already running.",
 							  "foo_opensubsonic");
 		return;
 	}
 	threaded_process::g_run_modeless(
-		new service_impl_t<sync_process_callback>(mode),
+		new service_impl_t<sync_process_callback>(mode, std::move(guard)),
 		threaded_process::flag_show_progress |
 			threaded_process::flag_show_abort |
 			threaded_process::flag_show_item,
@@ -1165,13 +1235,14 @@ void launch_sync(sync_mode mode) {
 }
 
 void launch_clear_cache() {
-	if (g_sync_in_progress.exchange(true)) {
+	sync_guard guard;
+	if (!guard.try_acquire()) {
 		popup_message::g_show("An OpenSubsonic job is already running.",
 							  "foo_opensubsonic");
 		return;
 	}
 	threaded_process::g_run_modeless(
-		new service_impl_t<clear_cache_process_callback>(),
+		new service_impl_t<clear_cache_process_callback>(std::move(guard)),
 		threaded_process::flag_show_progress |
 			threaded_process::flag_show_abort |
 			threaded_process::flag_show_item,
@@ -1179,7 +1250,8 @@ void launch_clear_cache() {
 }
 
 void launch_cache_artwork() {
-	if (g_sync_in_progress.exchange(true)) {
+	sync_guard guard;
+	if (!guard.try_acquire()) {
 		popup_message::g_show("An OpenSubsonic job is already running.",
 							  "foo_opensubsonic");
 		return;
@@ -1189,13 +1261,13 @@ void launch_cache_artwork() {
 		auto items = load_library_playlist_items();
 		threaded_process::g_run_modeless(
 			new service_impl_t<cache_artwork_process_callback>(
-				std::move(items)),
+				std::move(items), std::move(guard)),
 			threaded_process::flag_show_progress |
 				threaded_process::flag_show_abort |
 				threaded_process::flag_show_item,
 			core_api::get_main_window(), "OpenSubsonic Status");
 	} catch (const std::exception &e) {
-		g_sync_in_progress = false;
+		// guard destructor automatically releases lock
 		popup_message::g_show(PFC_string_formatter()
 								  << "Cache artwork failed:\n"
 								  << e.what(),
@@ -1204,14 +1276,15 @@ void launch_cache_artwork() {
 }
 
 void launch_clear_artwork_cache() {
-	if (g_sync_in_progress.exchange(true)) {
+	sync_guard guard;
+	if (!guard.try_acquire()) {
 		popup_message::g_show("An OpenSubsonic job is already running.",
 							  "foo_opensubsonic");
 		return;
 	}
 
 	threaded_process::g_run_modeless(
-		new service_impl_t<clear_artwork_cache_process_callback>(),
+		new service_impl_t<clear_artwork_cache_process_callback>(std::move(guard)),
 		threaded_process::flag_show_progress |
 			threaded_process::flag_show_abort |
 			threaded_process::flag_show_item,

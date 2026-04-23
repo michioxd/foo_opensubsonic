@@ -5,12 +5,12 @@
 #include "config.h"
 #include "http.h"
 #include "metadata.h"
+#include "time_utils.h"
 #include "utils.h"
 
 #include <SDK/album_art_helpers.h>
 
 #include <algorithm>
-#include <chrono>
 #include <shared_mutex>
 #include <unordered_map>
 #include <unordered_set>
@@ -214,12 +214,8 @@ make_artwork_cache_path_from_hash(const char *content_hash,
 	return path;
 }
 
-[[nodiscard]] std::uint64_t current_unix_time_ms() noexcept {
-	using namespace std::chrono;
-	return static_cast<std::uint64_t>(
-		duration_cast<milliseconds>(system_clock::now().time_since_epoch())
-			.count());
-}
+// Removed: duplicate of time_utils::current_unix_time_ms()
+// Now using subsonic::time_utils::current_unix_time_ms() instead
 
 [[nodiscard]] pfc::string8 hash_artwork_bytes(const void *data, t_size size) {
 	const auto hash =
@@ -265,7 +261,7 @@ try_use_cached_artwork(subsonic::artwork_cache_entry &cached_entry,
 		return false;
 	}
 
-	const auto now = current_unix_time_ms();
+	const auto now = subsonic::time_utils::current_unix_time_ms();
 	if (cached_entry.last_access_unix_ms == 0 ||
 		now < cached_entry.last_access_unix_ms ||
 		now - cached_entry.last_access_unix_ms >= k_cache_touch_interval_ms) {
@@ -351,7 +347,7 @@ download_artwork_to_cache(const subsonic::cached_track_metadata &track_meta,
 	entry.mime_type = mime_type;
 	entry.local_path = local_path;
 	entry.content_hash = content_hash;
-	entry.last_access_unix_ms = current_unix_time_ms();
+	entry.last_access_unix_ms = subsonic::time_utils::current_unix_time_ms();
 	upsert_artwork_entry(entry);
 
 	out_path = local_path;
