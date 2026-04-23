@@ -52,9 +52,7 @@ try_get_known_total_size(const cached_track_metadata &track);
 make_fallback_content_type(const cached_track_metadata &track);
 [[nodiscard]] pfc::string8
 make_display_name_from_metadata(const cached_track_metadata &track);
-[[nodiscard]] pfc::string8 make_display_name_for_path(const char *path);
 
 void populate_remote_path_stats(foobar2000_io::t_filestats2 &stats);
-void overlay_file_info_for_path(const char *path, file_info &info);
 
 } // namespace subsonic::metadata_utils

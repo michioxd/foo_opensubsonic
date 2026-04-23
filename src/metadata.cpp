@@ -816,4 +816,37 @@ void refresh_track(const char *track_id) {
 		[handle] { static_api_ptr_t<metadb_io>()->dispatch_refresh(handle); });
 }
 
+pfc::string8 make_display_name_for_path(const char *path) {
+	cached_track_metadata track;
+	if (try_get_track_metadata_for_path(path, track)) {
+		const auto value =
+			subsonic::metadata_utils::make_display_name_from_metadata(track);
+		if (!value.is_empty()) {
+			return value;
+		}
+	}
+
+	pfc::string8 track_id;
+	if (subsonic::extract_track_id_from_path(path, track_id)) {
+		return track_id;
+	}
+
+	return path != nullptr ? pfc::string8(path) : pfc::string8();
+}
+
+void overlay_file_info_for_path(const char *path, file_info &info) {
+	file_info_impl overlay;
+	if (!try_make_file_info_for_path(path, overlay)) {
+		return;
+	}
+
+	info.overwrite_meta(overlay);
+	info.overwrite_info(overlay);
+	if (overlay.get_length() > 0) {
+		info.set_length(overlay.get_length());
+	}
+	info.set_replaygain(replaygain_info::g_merge(overlay.get_replaygain(),
+												 info.get_replaygain()));
+}
+
 } // namespace subsonic::metadata

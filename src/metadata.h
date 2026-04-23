@@ -53,4 +53,12 @@ void remove_track_metadata(const char *track_id);
 // Notifies foobar2000 to reload metadata from cache
 void refresh_track(const char *track_id);
 
+// Create display name for track path (for VFS)
+// Tries to use metadata if available, falls back to track_id
+[[nodiscard]] pfc::string8 make_display_name_for_path(const char *path);
+
+// Overlay file_info with metadata from path (for VFS)
+// Merges cached metadata into provided file_info
+void overlay_file_info_for_path(const char *path, file_info &info);
+
 } // namespace subsonic::metadata

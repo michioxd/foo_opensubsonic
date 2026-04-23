@@ -2,7 +2,6 @@
 
 #include "metadata_utils.h"
 
-#include "../metadata.h"
 #include "utils.h"
 
 #include <nlohmann/json.hpp>
@@ -378,22 +377,9 @@ make_display_name_from_metadata(const cached_track_metadata &track) {
 	return out;
 }
 
-pfc::string8 make_display_name_for_path(const char *path) {
-	cached_track_metadata track;
-	if (subsonic::metadata::try_get_track_metadata_for_path(path, track)) {
-		const auto value = make_display_name_from_metadata(track);
-		if (!value.is_empty()) {
-			return value;
-		}
-	}
-
-	pfc::string8 track_id;
-	if (subsonic::extract_track_id_from_path(path, track_id)) {
-		return track_id;
-	}
-
-	return path != nullptr ? pfc::string8(path) : pfc::string8();
-}
+// Functions that depend on metadata system moved to metadata.cpp
+// - make_display_name_for_path
+// - overlay_file_info_for_path
 
 void populate_remote_path_stats(foobar2000_io::t_filestats2 &stats) {
 	stats.set_file(true);
@@ -401,21 +387,6 @@ void populate_remote_path_stats(foobar2000_io::t_filestats2 &stats) {
 	stats.set_remote(true);
 	stats.m_size = filesize_invalid;
 	stats.m_timestamp = 3;
-}
-
-void overlay_file_info_for_path(const char *path, file_info &info) {
-	file_info_impl overlay;
-	if (!subsonic::metadata::try_make_file_info_for_path(path, overlay)) {
-		return;
-	}
-
-	info.overwrite_meta(overlay);
-	info.overwrite_info(overlay);
-	if (overlay.get_length() > 0) {
-		info.set_length(overlay.get_length());
-	}
-	info.set_replaygain(replaygain_info::g_merge(overlay.get_replaygain(),
-												 info.get_replaygain()));
 }
 
 } // namespace subsonic::metadata_utils
