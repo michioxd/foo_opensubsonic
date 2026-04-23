@@ -2,6 +2,7 @@
 
 #include "library_sync_engine.h"
 #include "utils/subsonic_json_parser.h"
+#include "utils/track_path_util.h"
 
 #include <string>
 
@@ -184,6 +185,83 @@ build_artist_sync_plan(sync_context &ctx) {
 
 	// Group albums by artist (pure function)
 	return group_albums_by_artist(all_albums);
+}
+
+[[nodiscard]] std::vector<remote_playlist_sync_result>
+fetch_remote_playlists(sync_context &ctx,
+					   std::vector<cached_track_metadata> &playlist_metadata_entries) {
+	std::vector<remote_playlist_sync_result> playlists;
+	std::unordered_map<std::string, size_t> metadata_index;
+
+	// Fetch playlist list
+	ctx.set_progress_text("Fetching playlist summaries...");
+	const auto playlists_root = ctx.http_fetch("getPlaylists.view", {});
+	const auto playlists_it = playlists_root.find("playlists");
+	if (playlists_it == playlists_root.end() || !playlists_it->is_object()) {
+		return playlists;
+	}
+
+	// Parse playlist summaries (id + name)
+	std::vector<std::pair<pfc::string8, pfc::string8>> summaries;
+	json_parser::for_each_member_item(
+		*playlists_it, "playlist", [&](const nlohmann::json &playlist_node) {
+			const auto playlist_id = json_parser::get_string(playlist_node, "id");
+			if (!playlist_id.is_empty()) {
+				summaries.emplace_back(playlist_id,
+									   json_parser::get_string(playlist_node, "name"));
+			}
+		});
+
+	// Fetch details for each playlist
+	for (size_t i = 0; i < summaries.size(); ++i) {
+		ctx.check_abort();
+		const auto &[playlist_id, playlist_name] = summaries[i];
+
+		ctx.set_progress_numeric(i, summaries.size());
+		ctx.set_progress_text(PFC_string_formatter()
+							  << "Fetching playlist: " << playlist_name);
+
+		// Fetch playlist detail
+		std::vector<query_param> params;
+		params.push_back(query_param(pfc::string8("id"), playlist_id));
+		const auto playlist_root = ctx.http_fetch("getPlaylist.view", params);
+		const auto playlist_it = playlist_root.find("playlist");
+		if (playlist_it == playlist_root.end() || !playlist_it->is_object()) {
+			continue;
+		}
+
+		// Parse playlist metadata
+		remote_playlist_sync_result local_playlist;
+		local_playlist.remote_id = playlist_id;
+		local_playlist.name = json_parser::get_string(*playlist_it, "name");
+		if (local_playlist.name.is_empty()) {
+			local_playlist.name = playlist_name;
+		}
+
+		// Parse tracks in playlist
+		json_parser::for_each_member_item(
+			*playlist_it, "entry", [&](const nlohmann::json &entry_node) {
+				const auto entry = parse_track_metadata(entry_node);
+				if (!entry.is_valid()) {
+					return;
+				}
+
+				// Create handle and add to playlist
+				const pfc::string8 path = track_path_util::make_subsonic_path(entry.track_id);
+				auto handle = static_api_ptr_t<metadb>()->handle_create(path, 0);
+				if (handle.is_valid()) {
+					local_playlist.handles.add_item(handle);
+				}
+
+				// Deduplicate metadata entries
+				merge_unique_metadata(playlist_metadata_entries, metadata_index,
+									  entry);
+			});
+
+		playlists.push_back(std::move(local_playlist));
+	}
+
+	return playlists;
 }
 
 } // namespace sync

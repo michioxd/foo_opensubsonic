@@ -369,75 +369,31 @@ fetch_library_sync_result(const subsonic::server_credentials &credentials,
 	const subsonic::server_credentials &credentials,
 	std::vector<subsonic::cached_track_metadata> &playlist_metadata_entries,
 	threaded_process_status &status, abort_callback &abort) {
-	std::vector<remote_playlist_sync_result> playlists;
-	std::unordered_map<std::string, size_t> metadata_index;
+	// Create sync context with callbacks for dependency injection
+	subsonic::sync::sync_context ctx;
 
-	const json playlists_root =
-		fetch_endpoint(credentials, "getPlaylists.view", {}, abort);
-	const auto playlists_it = playlists_root.find("playlists");
-	if (playlists_it == playlists_root.end() || !playlists_it->is_object()) {
-		return playlists;
-	}
+	// HTTP fetch callback
+	ctx.http_fetch = [&](const char *endpoint, const std::vector<subsonic::query_param> &params) -> json {
+		return fetch_endpoint(credentials, endpoint, params, abort);
+	};
 
-	status.set_item("Fetching playlist summaries...");
+	// Progress text callback
+	ctx.set_progress_text = [&](const char *message) {
+		status.set_item(message);
+	};
 
-	std::vector<std::pair<pfc::string8, pfc::string8>> summaries;
-	subsonic::json_parser::for_each_member_item(
-		*playlists_it, "playlist", [&](const json &playlist_node) {
-			const auto playlist_id = subsonic::json_parser::get_string(playlist_node, "id");
-			if (playlist_id.is_empty()) {
-				return;
-			}
+	// Progress numeric callback
+	ctx.set_progress_numeric = [&](size_t current, size_t total) {
+		status.set_progress(current, total);
+	};
 
-			summaries.emplace_back(playlist_id,
-								   subsonic::json_parser::get_string(playlist_node, "name"));
-		});
-
-	subsonic::log_info("playlist",
-					   (PFC_string_formatter() << "syncing " << summaries.size()
-											   << " OpenSubsonic playlists")
-						   .c_str());
-	for (size_t i = 0; i < summaries.size(); ++i) {
+	// Abort check callback
+	ctx.check_abort = [&]() {
 		abort.check();
-		const auto &[playlist_id, playlist_name] = summaries[i];
+	};
 
-		status.set_progress(i, summaries.size());
-		status.set_item(PFC_string_formatter()
-						<< "Fetching playlist: " << playlist_name);
-
-		const json playlist_root = fetch_endpoint(
-			credentials, "getPlaylist.view",
-			make_query_params(
-				{subsonic::query_param(pfc::string8("id"), playlist_id)}),
-			abort);
-		const auto playlist_it = playlist_root.find("playlist");
-		if (playlist_it == playlist_root.end() || !playlist_it->is_object()) {
-			continue;
-		}
-
-		remote_playlist_sync_result local_playlist;
-		local_playlist.remote_id = playlist_id;
-		local_playlist.name = subsonic::json_parser::get_string(*playlist_it, "name");
-		if (local_playlist.name.is_empty()) {
-			local_playlist.name = playlist_name;
-		}
-
-		subsonic::json_parser::for_each_member_item(
-			*playlist_it, "entry", [&](const json &entry_node) {
-				const auto entry = parse_track_metadata(entry_node);
-				if (!entry.is_valid()) {
-					return;
-				}
-
-				append_handle(local_playlist.handles, entry);
-				merge_unique_metadata(playlist_metadata_entries, metadata_index,
-									  entry);
-			});
-
-		playlists.push_back(std::move(local_playlist));
-	}
-
-	return playlists;
+	// Delegate to extracted orchestration function
+	return subsonic::sync::fetch_remote_playlists(ctx, playlist_metadata_entries);
 }
 
 [[nodiscard]] pfc::array_t<t_uint8> make_property_blob(const char *value) {
@@ -782,6 +738,45 @@ void apply_sync_outcome(const sync_outcome &outcome) {
 		}
 	}
 }
+
+// ============================================================================
+// Generic Lambda-based Threaded Process Callbacks
+// Replaces boilerplate callback classes (Phase 4.5)
+// ============================================================================
+
+template <typename RunFunc, typename DoneFunc>
+class lambda_threaded_process_callback : public threaded_process_callback {
+  public:
+	lambda_threaded_process_callback(RunFunc &&run_func, DoneFunc &&done_func)
+		: m_run_func(std::forward<RunFunc>(run_func)),
+		  m_done_func(std::forward<DoneFunc>(done_func)) {}
+
+	void on_init(HWND) override {}
+
+	void run(threaded_process_status &status, abort_callback &abort) override {
+		m_run_func(status, abort);
+	}
+
+	void on_done(HWND wnd, bool was_aborted) override {
+		m_done_func(wnd, was_aborted);
+	}
+
+  private:
+	RunFunc m_run_func;
+	DoneFunc m_done_func;
+};
+
+// Helper to create lambda callback - reduces boilerplate from 80 lines → 10 lines
+template <typename RunFunc, typename DoneFunc>
+service_ptr_t<threaded_process_callback>
+make_threaded_callback(RunFunc &&run_func, DoneFunc &&done_func) {
+	return fb2k::service_new<lambda_threaded_process_callback<RunFunc, DoneFunc>>(
+		std::forward<RunFunc>(run_func), std::forward<DoneFunc>(done_func));
+}
+
+// ============================================================================
+// Legacy Callback Classes (to be replaced with make_threaded_callback)
+// ============================================================================
 
 class sync_process_callback : public threaded_process_callback {
   public:

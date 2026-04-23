@@ -76,9 +76,13 @@ fetch_library_sync_result(sync_context &ctx);
 
 // Fetch remote playlists from server
 // Returns playlist sync results with deduplicated metadata
+// Also populates playlist_metadata_entries with unique metadata from all playlists
 [[nodiscard]] std::vector<remote_playlist_sync_result>
 fetch_remote_playlists(sync_context &ctx,
 					   std::vector<cached_track_metadata> &playlist_metadata_entries);
+
+// Helper: Create metadb_handle from track_id for playlist population
+using handle_factory_callback = std::function<metadb_handle_ptr(const char *track_id)>;
 
 } // namespace sync
 } // namespace subsonic
