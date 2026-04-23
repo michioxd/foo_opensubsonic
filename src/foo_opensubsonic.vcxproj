@@ -280,6 +280,7 @@
     <ClInclude Include="utils\subsonic_json_parser.h" />
     <ClInclude Include="utils\metadata_utils.h" />
     <ClInclude Include="utils\time_utils.h" />
+    <ClInclude Include="utils\track_path_util.h" />
     <ClInclude Include="utils\url_builder.h" />
     <ClInclude Include="utils\utils.h" />
     <ClInclude Include="vfs.h" />
@@ -317,6 +318,9 @@
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
     </ClCompile>
     <ClCompile Include="utils\time_utils.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="utils\track_path_util.cpp">
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
     </ClCompile>
     <ClCompile Include="utils\url_builder.cpp">

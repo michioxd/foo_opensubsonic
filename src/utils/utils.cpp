@@ -3,6 +3,7 @@
 #include "utils.h"
 #include "crypto_util.h"
 #include "string_util.h"
+#include "track_path_util.h"
 #include "url_builder.h"
 
 namespace {
@@ -32,8 +33,10 @@ bool ends_with_ascii_nocase(const char *text, const char *suffix) noexcept {
 	return string_util::ends_with_ascii_nocase(text, suffix);
 }
 
+// Track path utilities moved to track_path_util.h/cpp
+
 bool is_subsonic_path(const char *path) noexcept {
-	return string_util::starts_with_ascii_nocase(path, k_scheme);
+	return track_path_util::is_subsonic_path(path);
 }
 
 pfc::string8 normalize_base_url(const char *base_url) {
@@ -41,30 +44,12 @@ pfc::string8 normalize_base_url(const char *base_url) {
 }
 
 pfc::string8 make_subsonic_path(const char *track_id) {
-	pfc::string8 path = k_scheme;
-	if (track_id != nullptr) {
-		path += track_id;
-	}
-	return path;
+	return track_path_util::make_subsonic_path(track_id);
 }
 
 bool extract_track_id_from_path(const char *path,
 								pfc::string_base &out_track_id) {
-	out_track_id.reset();
-	if (!is_subsonic_path(path)) {
-		return false;
-	}
-
-	const char *cursor = path + strlen(k_scheme);
-	const char *end = cursor;
-	while (*end != '\0' && *end != '?' && *end != '#') {
-		++end;
-	}
-	if (cursor == end) {
-		return false;
-	}
-	out_track_id.add_string(cursor, static_cast<t_size>(end - cursor));
-	return out_track_id.length() > 0;
+	return track_path_util::extract_track_id_from_path(path, out_track_id);
 }
 
 // Crypto utilities moved to crypto_util.h/cpp

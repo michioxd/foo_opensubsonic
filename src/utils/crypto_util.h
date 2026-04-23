@@ -2,8 +2,6 @@
 
 #include <SDK/foobar2000.h>
 
-#include <pfc/string8.h>
-
 namespace subsonic {
 namespace crypto_util {
 
