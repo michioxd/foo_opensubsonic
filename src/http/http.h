@@ -64,4 +64,8 @@ void read_all(const response &http_response, mem_block_container &out,
 								  pfc::string_base &out_value);
 [[nodiscard]] bool status_is_success(const response &http_response) noexcept;
 
+// Parse numeric HTTP status code from status text (e.g., "200 OK" -> 200)
+// Returns: Status code (100-599) or 0 if parsing failed
+[[nodiscard]] int parse_status_code(const pfc::string8 &status_text) noexcept;
+
 } // namespace subsonic::http

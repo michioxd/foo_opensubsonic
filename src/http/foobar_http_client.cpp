@@ -2,6 +2,7 @@
 
 #include "foobar_http_client.h"
 #include "http.h"
+#include "../utils/metadata_utils.h"
 #include "../utils/subsonic_json_parser.h"
 #include "../utils/utils.h"
 
@@ -80,13 +81,19 @@ foobar_http_client::fetch_api(const char *endpoint,
 		// Use existing http functions
 		const auto response = http::open(url, abort);
 
-		result.status_code = 200; // Assume success if no exception
+		// Extract real HTTP status code from response
+		result.status_code = http::parse_status_code(response.status_text);
 		result.status_text = response.status_text;
 		result.success = http::status_is_success(response);
 		result.body = http::read_text(response, abort);
+	} catch (const exception_aborted &) {
+		// User-initiated abort - rethrow to preserve abort semantics
+		// Do NOT convert to fake 500 error
+		throw;
 	} catch (const std::exception &e) {
+		// Non-abort errors (network failure, parse error, etc.)
 		result.success = false;
-		result.status_code = 500;
+		result.status_code = 500; // Fallback for generic errors
 		result.status_text = e.what();
 	}
 
@@ -105,14 +112,40 @@ foobar_http_client::get_binary(const char *url, size_t max_bytes,
 								 << response.status_text);
 	}
 
-	// Read binary data directly to vector
-	std::vector<uint8_t> data;
-	data.reserve(max_bytes); // Pre-allocate to avoid reallocations
-
 	const size_t chunk_size = 64 * 1024; // 64KB chunks
-	uint8_t buffer[64 * 1024];
 
+	// Try to get Content-Length header for smart reservation
+	pfc::string8 content_length_str;
+	size_t expected_size = 0;
+	if (http::try_get_header(response, "content-length", content_length_str)) {
+		// Parse content-length if available
+		t_filesize parsed_size = filesize_invalid;
+		if (subsonic::metadata_utils::try_parse_filesize(content_length_str,
+														 parsed_size) &&
+			parsed_size != filesize_invalid) {
+			expected_size = pfc::downcast_guarded<size_t>(parsed_size);
+
+			// Reject if exceeds max_bytes upfront
+			if (expected_size > max_bytes) {
+				throw std::runtime_error(PFC_string_formatter()
+										 << "Response size (" << expected_size
+										 << " bytes) exceeds max_bytes limit ("
+										 << max_bytes << " bytes)");
+			}
+		}
+	}
+
+	// Reserve smart amount: use content-length if available, else one chunk
+	std::vector<uint8_t> data;
+	const size_t reserve_size =
+		expected_size > 0 ? expected_size
+						  : (std::min)(max_bytes, chunk_size);
+	data.reserve(reserve_size);
+
+	uint8_t buffer[64 * 1024];
 	size_t total_read = 0;
+
+	// Read up to max_bytes
 	while (total_read < max_bytes) {
 		abort.check();
 
@@ -120,11 +153,27 @@ foobar_http_client::get_binary(const char *url, size_t max_bytes,
 		const size_t bytes_read = response.stream->read(buffer, to_read, abort);
 
 		if (bytes_read == 0) {
-			break; // EOF
+			break; // EOF - expected termination
 		}
 
 		data.insert(data.end(), buffer, buffer + bytes_read);
 		total_read += bytes_read;
+	}
+
+	// Check if response was truncated (more data available than max_bytes)
+	if (total_read == max_bytes) {
+		// Try to read one more byte to detect truncation
+		uint8_t overflow_check[1];
+		const size_t extra_bytes =
+			response.stream->read(overflow_check, 1, abort);
+
+		if (extra_bytes > 0) {
+			// Response exceeded max_bytes - throw to prevent silent truncation
+			throw std::runtime_error(
+				PFC_string_formatter()
+				<< "Response exceeded max_bytes limit (" << max_bytes
+				<< " bytes). Download truncated to prevent memory exhaustion.");
+		}
 	}
 
 	return data;

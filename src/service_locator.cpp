@@ -3,65 +3,71 @@
 #include "service_locator.h"
 
 #include <stdexcept>
+#include <memory>
 
 namespace subsonic {
 
 // Static member initialization
-std::atomic<service_locator::ServiceBundle *> service_locator::s_services{
-	nullptr};
+// shared_ptr provides automatic lifetime management and thread-safe ref counting
+std::atomic<std::shared_ptr<service_locator::ServiceBundle>>
+	service_locator::s_services{nullptr};
 
 void service_locator::initialize(IHttpClient *http_client,
 								  IMetadataRepository *metadata_repo) noexcept {
-	// Create new immutable bundle with both services
-	auto *bundle = new (std::nothrow) ServiceBundle(http_client, metadata_repo);
+	// Create new immutable bundle with both services wrapped in shared_ptr
+	auto bundle =
+		std::make_shared<ServiceBundle>(http_client, metadata_repo);
 
-	// Store with release semantics - ensures all writes to bundle are visible
-	// to other threads that load with acquire semantics
+	// Atomically store new shared_ptr with release semantics
+	// Old bundle (if any) is automatically destroyed when last reference drops
+	// Thread-safe: Any thread holding a copy keeps the old bundle alive
 	s_services.store(bundle, std::memory_order_release);
 }
 
 void service_locator::shutdown() noexcept {
-	// Atomically exchange with nullptr and get old value
-	// Release semantics ensures all operations on bundle are complete
-	auto *old_bundle = s_services.exchange(nullptr, std::memory_order_release);
-
-	// Delete the old bundle (safe because no other thread can see it now)
-	delete old_bundle;
+	// Atomically reset shared_ptr with release semantics
+	// Outstanding copies in accessor threads keep bundle alive until released
+	// No manual delete needed - automatic when ref count reaches zero
+	s_services.store(nullptr, std::memory_order_release);
 }
 
 [[nodiscard]] IHttpClient &service_locator::http_client() {
-	// Load with acquire semantics - synchronizes with store/release in
-	// initialize() Ensures we see all writes to the bundle
-	auto *bundle = s_services.load(std::memory_order_acquire);
+	// Atomic load creates a shared_ptr copy with acquire semantics
+	// This copy keeps the bundle alive for the duration of this function
+	// Even if shutdown() is called concurrently, our copy remains valid
+	auto bundle = s_services.load(std::memory_order_acquire);
 
-	if (bundle == nullptr || bundle->http == nullptr) {
+	if (!bundle || bundle->http == nullptr) {
 		throw std::logic_error(
 			"service_locator::http_client() called before initialize()");
 	}
 
+	// Return reference backed by shared_ptr - safe because bundle stays alive
+	// until end of this scope (caller must not store the reference long-term)
 	return *bundle->http;
 }
 
 [[nodiscard]] IMetadataRepository &service_locator::metadata_repository() {
-	// Load with acquire semantics - synchronizes with store/release in
-	// initialize()
-	auto *bundle = s_services.load(std::memory_order_acquire);
+	// Atomic load creates a shared_ptr copy with acquire semantics
+	// Keeps bundle alive even if shutdown() is called concurrently
+	auto bundle = s_services.load(std::memory_order_acquire);
 
-	if (bundle == nullptr || bundle->metadata == nullptr) {
+	if (!bundle || bundle->metadata == nullptr) {
 		throw std::logic_error("service_locator::metadata_repository() called "
 							   "before initialize()");
 	}
 
+	// Return reference backed by shared_ptr copy
 	return *bundle->metadata;
 }
 
 [[nodiscard]] bool service_locator::is_initialized() noexcept {
-	// Load with acquire semantics to see consistent state
-	auto *bundle = s_services.load(std::memory_order_acquire);
+	// Atomic load with acquire semantics
+	// shared_ptr copy goes out of scope immediately (RAII cleanup)
+	auto bundle = s_services.load(std::memory_order_acquire);
 
 	// Single atomic load gives consistent snapshot of both pointers
-	return bundle != nullptr && bundle->http != nullptr &&
-		   bundle->metadata != nullptr;
+	return bundle && bundle->http != nullptr && bundle->metadata != nullptr;
 }
 
 } // namespace subsonic
