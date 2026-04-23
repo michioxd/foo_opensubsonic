@@ -121,5 +121,70 @@ group_albums_by_artist(const std::vector<album_sync_summary> &albums) {
 	return plans;
 }
 
+// ============================================================================
+// PART 2: Orchestration Functions
+// ============================================================================
+
+namespace {
+constexpr size_t k_album_list_page_size = 500;
+
+[[nodiscard]] pfc::string8 format_size(size_t value) {
+	return PFC_string_formatter() << value;
+}
+
+[[nodiscard]] pfc::string8 format_offset_message(size_t offset) {
+	return PFC_string_formatter() << "Fetching album index... (offset " << offset << ")";
+}
+
+} // anonymous namespace
+
+[[nodiscard]] std::vector<artist_sync_plan>
+build_artist_sync_plan(sync_context &ctx) {
+	std::vector<album_sync_summary> all_albums;
+
+	// Fetch all albums with pagination
+	for (size_t offset = 0;; offset += k_album_list_page_size) {
+		ctx.check_abort();
+		ctx.set_progress_text(format_offset_message(offset));
+
+		// Build query params
+		std::vector<query_param> params;
+		params.push_back(query_param(pfc::string8("type"), pfc::string8("alphabeticalByArtist")));
+		params.push_back(query_param(pfc::string8("size"), format_size(k_album_list_page_size)));
+		params.push_back(query_param(pfc::string8("offset"), format_size(offset)));
+
+		// Fetch via callback
+		const auto album_list_root = ctx.http_fetch("getAlbumList2.view", params);
+
+		const auto album_list_it = album_list_root.find("albumList2");
+		if (album_list_it == album_list_root.end() ||
+			!album_list_it->is_object()) {
+			break;
+		}
+
+		std::vector<album_sync_summary> page_albums;
+		json_parser::for_each_member_item(
+			*album_list_it, "album", [&](const nlohmann::json &album_node) {
+				const auto summary = parse_album_summary(album_node);
+				if (!summary.album_id.is_empty()) {
+					page_albums.push_back(summary);
+				}
+			});
+
+		if (page_albums.empty()) {
+			break;
+		}
+
+		all_albums.insert(all_albums.end(), page_albums.begin(), page_albums.end());
+
+		if (page_albums.size() < k_album_list_page_size) {
+			break;
+		}
+	}
+
+	// Group albums by artist (pure function)
+	return group_albums_by_artist(all_albums);
+}
+
 } // namespace sync
 } // namespace subsonic

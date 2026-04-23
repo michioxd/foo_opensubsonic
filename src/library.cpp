@@ -239,53 +239,31 @@ void set_library_fetch_status(threaded_process_status &status,
 [[nodiscard]] std::vector<artist_sync_plan>
 build_artist_sync_plan(const subsonic::server_credentials &credentials,
 					   threaded_process_status &status, abort_callback &abort) {
-	std::vector<album_sync_summary> all_albums;
+	// Create sync context with callbacks for dependency injection
+	subsonic::sync::sync_context ctx;
 
-	// Fetch all albums with pagination
-	for (size_t offset = 0;; offset += k_album_list_page_size) {
+	// HTTP fetch callback
+	ctx.http_fetch = [&](const char *endpoint, const std::vector<subsonic::query_param> &params) -> json {
+		return fetch_endpoint(credentials, endpoint, params, abort);
+	};
+
+	// Progress text callback
+	ctx.set_progress_text = [&](const char *message) {
+		status.set_item(message);
+	};
+
+	// Progress numeric callback (not used in this function)
+	ctx.set_progress_numeric = [&](size_t current, size_t total) {
+		status.set_progress(current, total);
+	};
+
+	// Abort check callback
+	ctx.check_abort = [&]() {
 		abort.check();
+	};
 
-		status.set_item(PFC_string_formatter()
-						<< "Fetching album index... (offset " << offset << ")");
-
-		const json album_list_root = fetch_endpoint(
-			credentials, "getAlbumList2.view",
-			make_query_params(
-				{subsonic::query_param("type", "alphabeticalByArtist"),
-				 subsonic::query_param("size", PFC_string_formatter()
-												   << k_album_list_page_size),
-				 subsonic::query_param("offset", PFC_string_formatter()
-													 << offset)}),
-			abort);
-
-		const auto album_list_it = album_list_root.find("albumList2");
-		if (album_list_it == album_list_root.end() ||
-			!album_list_it->is_object()) {
-			break;
-		}
-
-		std::vector<album_sync_summary> page_albums;
-		subsonic::json_parser::for_each_member_item(
-			*album_list_it, "album", [&](const json &album_node) {
-				const auto summary = subsonic::sync::parse_album_summary(album_node);
-				if (!summary.album_id.is_empty()) {
-					page_albums.push_back(summary);
-				}
-			});
-
-		if (page_albums.empty()) {
-			break;
-		}
-
-		all_albums.insert(all_albums.end(), page_albums.begin(), page_albums.end());
-
-		if (page_albums.size() < k_album_list_page_size) {
-			break;
-		}
-	}
-
-	// Group albums by artist (pure function, no HTTP/UI)
-	return subsonic::sync::group_albums_by_artist(all_albums);
+	// Delegate to extracted orchestration function
+	return subsonic::sync::build_artist_sync_plan(ctx);
 }
 
 [[nodiscard]] library_sync_result
