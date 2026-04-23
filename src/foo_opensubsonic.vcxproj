@@ -278,6 +278,7 @@
     <ClInclude Include="metadata_repository_interface.h" />
     <ClInclude Include="playback.h" />
     <ClInclude Include="resource.h" />
+    <ClInclude Include="service_locator.h" />
     <ClInclude Include="stdafx.h" />
     <ClInclude Include="sync_types.h" />
     <ClInclude Include="types.h" />
@@ -308,6 +309,7 @@
     <ClCompile Include="metadata.cpp" />
     <ClCompile Include="playback.cpp" />
     <ClCompile Include="preferences.cpp" />
+    <ClCompile Include="service_locator.cpp" />
     <ClCompile Include="stdafx.cpp">
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">Create</PrecompiledHeader>
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Create</PrecompiledHeader>
