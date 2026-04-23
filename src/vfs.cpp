@@ -5,8 +5,8 @@
 #include "config.h"
 #include "http.h"
 #include "metadata.h"
-#include "metadata_utils.h"
-#include "utils.h"
+#include "utils/metadata_utils.h"
+#include "utils/utils.h"
 
 #include <SDK/file.h>
 #include <SDK/file_info_impl.h>

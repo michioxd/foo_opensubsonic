@@ -7,8 +7,8 @@
 #include "config.h"
 #include "http.h"
 #include "metadata.h"
-#include "subsonic_json_parser.h"
-#include "utils.h"
+#include "utils/subsonic_json_parser.h"
+#include "utils/utils.h"
 
 #include <SDK/core_api.h>
 #include <SDK/menu.h>

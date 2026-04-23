@@ -2,9 +2,9 @@
 
 #include "cache.h"
 #include "metadata.h"
-#include "metadata_utils.h"
+#include "utils/metadata_utils.h"
 
-#include "utils.h"
+#include "utils/utils.h"
 
 #include <SDK/core_api.h>
 #include <SDK/initquit.h>

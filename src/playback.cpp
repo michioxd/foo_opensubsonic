@@ -2,8 +2,8 @@
 
 #include "config.h"
 #include "http.h"
-#include "time_utils.h"
-#include "utils.h"
+#include "utils/time_utils.h"
+#include "utils/utils.h"
 
 #include <SDK/app_close_blocker.h>
 #include <SDK/play_callback.h>

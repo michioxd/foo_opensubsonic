@@ -4,7 +4,7 @@
 #include "config.h"
 #include "library.h"
 #include "resource.h"
-#include "utils.h"
+#include "utils/utils.h"
 
 #include <SDK/preferences_page.h>
 #include <helpers/DarkMode.h>

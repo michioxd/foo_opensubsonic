@@ -5,8 +5,8 @@
 #include "config.h"
 #include "http.h"
 #include "metadata.h"
-#include "time_utils.h"
-#include "utils.h"
+#include "utils/time_utils.h"
+#include "utils/utils.h"
 
 #include <SDK/album_art_helpers.h>
 
