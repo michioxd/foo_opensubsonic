@@ -2,6 +2,7 @@
 
 #include "config.h"
 
+#include "utils/url_builder.h"
 #include "utils/utils.h"
 
 namespace {
@@ -52,7 +53,7 @@ namespace subsonic::config {
 
 server_credentials load_server_credentials() {
 	server_credentials credentials;
-	credentials.base_url = normalize_base_url(g_cfg_server_url.get());
+	credentials.base_url = url_builder::normalize_base_url(g_cfg_server_url.get());
 	credentials.username = g_cfg_username.get();
 	credentials.password = g_cfg_password.get();
 	credentials.api_version = g_cfg_api_version.get();
@@ -62,7 +63,7 @@ server_credentials load_server_credentials() {
 }
 
 void save_server_credentials(const server_credentials &credentials) {
-	g_cfg_server_url = normalize_base_url(credentials.base_url);
+	g_cfg_server_url = url_builder::normalize_base_url(credentials.base_url);
 	g_cfg_username = credentials.username;
 	g_cfg_password = credentials.password;
 	g_cfg_api_version = credentials.api_version.is_empty()
