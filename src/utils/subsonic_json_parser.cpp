@@ -11,11 +11,12 @@ pfc::string8 to_string(const nlohmann::json &value) {
 	if (value.is_string()) {
 		return value.get_ref<const std::string &>().c_str();
 	}
-	if (value.is_number_integer()) {
-		return std::to_string(value.get<long long>()).c_str();
-	}
+	// Check unsigned before integer since is_number_integer() returns true for both
 	if (value.is_number_unsigned()) {
 		return std::to_string(value.get<unsigned long long>()).c_str();
+	}
+	if (value.is_number_integer()) {
+		return std::to_string(value.get<long long>()).c_str();
 	}
 	if (value.is_number_float()) {
 		return std::to_string(value.get<double>()).c_str();
