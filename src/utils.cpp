@@ -1,6 +1,7 @@
 #include "stdafx.h"
 
 #include "utils.h"
+#include "string_util.h"
 
 namespace {
 
@@ -33,35 +34,22 @@ const char *skip_leading_slashes(const char *value) noexcept {
 
 namespace subsonic {
 
+// String utilities moved to string_util.h/cpp
+
 bool strings_equal(const char *lhs, const char *rhs) noexcept {
-	const char *left = lhs != nullptr ? lhs : "";
-	const char *right = rhs != nullptr ? rhs : "";
-	return std::strcmp(left, right) == 0;
+	return string_util::strings_equal(lhs, rhs);
 }
 
 bool starts_with_ascii_nocase(const char *text, const char *prefix) noexcept {
-	if (text == nullptr || prefix == nullptr) {
-		return false;
-	}
-	const auto prefix_len = strlen(prefix);
-	return pfc::stricmp_ascii_ex(text, prefix_len, prefix, prefix_len) == 0;
+	return string_util::starts_with_ascii_nocase(text, prefix);
 }
 
 bool ends_with_ascii_nocase(const char *text, const char *suffix) noexcept {
-	if (text == nullptr || suffix == nullptr) {
-		return false;
-	}
-	const auto text_len = strlen(text);
-	const auto suffix_len = strlen(suffix);
-	if (suffix_len > text_len) {
-		return false;
-	}
-	return pfc::stricmp_ascii_ex(text + (text_len - suffix_len), suffix_len,
-								 suffix, suffix_len) == 0;
+	return string_util::ends_with_ascii_nocase(text, suffix);
 }
 
 bool is_subsonic_path(const char *path) noexcept {
-	return starts_with_ascii_nocase(path, k_scheme);
+	return string_util::starts_with_ascii_nocase(path, k_scheme);
 }
 
 pfc::string8 normalize_base_url(const char *base_url) {
