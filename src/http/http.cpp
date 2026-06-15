@@ -2,12 +2,14 @@
 
 #include "http.h"
 
+#include "../utils/metadata_utils.h"
 #include "../utils/utils.h"
 
 namespace {
 
 constexpr const char *k_scope = "http";
 constexpr size_t k_default_chunk_size = 64 * 1024;
+constexpr size_t k_expected_size_unknown = (std::numeric_limits<size_t>::max)();
 
 void apply_headers(http_request::ptr request,
 				   const std::vector<subsonic::http::header> &headers) {
@@ -34,6 +36,41 @@ void populate_response_metadata(subsonic::http::response &out) {
 
 size_t clamp_chunk_size(size_t chunk_size) noexcept {
 	return chunk_size == 0 ? k_default_chunk_size : chunk_size;
+}
+
+size_t determine_initial_reserve(size_t actual_chunk_size, size_t max_bytes,
+								 size_t expected_size) {
+	if (expected_size != k_expected_size_unknown) {
+		if (expected_size > max_bytes) {
+			throw pfc::exception_overflow();
+		}
+		return expected_size;
+	}
+
+	return std::min(max_bytes, actual_chunk_size);
+}
+
+size_t get_expected_response_size(const subsonic::http::response &http_response,
+								  size_t max_bytes) {
+	pfc::string8 content_length;
+	if (!http_response.reply.is_valid() ||
+		!http_response.reply->get_http_header("content-length",
+											content_length)) {
+		return k_expected_size_unknown;
+	}
+
+	t_filesize parsed = filesize_invalid;
+	if (!subsonic::metadata_utils::try_parse_filesize(content_length, parsed) ||
+		parsed == filesize_invalid) {
+		return k_expected_size_unknown;
+	}
+
+	const auto expected_size = static_cast<size_t>(parsed);
+	if (expected_size > max_bytes) {
+		throw pfc::exception_overflow();
+	}
+
+	return expected_size;
 }
 
 } // namespace
@@ -109,14 +146,19 @@ response open_api(const server_credentials &credentials, const char *endpoint,
 	return open(url.c_str(), abort, params);
 }
 
-void read_all(file::ptr stream, mem_block_container &out, abort_callback &abort,
-			  size_t chunk_size, size_t max_bytes) {
+static void read_all(file::ptr stream, mem_block_container &out,
+					 abort_callback &abort, size_t chunk_size, size_t max_bytes,
+					 size_t expected_size) {
 	if (!stream.is_valid()) {
 		throw pfc::exception_invalid_params();
 	}
 
 	abort.check();
 	const size_t actual_chunk_size = clamp_chunk_size(chunk_size);
+	std::vector<t_uint8> data;
+	data.reserve(
+		determine_initial_reserve(actual_chunk_size, max_bytes, expected_size));
+
 	pfc::array_t<t_uint8> buffer;
 	buffer.set_size(actual_chunk_size);
 
@@ -135,16 +177,25 @@ void read_all(file::ptr stream, mem_block_container &out, abort_callback &abort,
 			throw pfc::exception_overflow();
 		}
 
-		out.set_size(total + got);
-		memcpy(static_cast<t_uint8 *>(out.get_ptr()) + total, buffer.get_ptr(),
-			   got);
+		data.insert(data.end(), buffer.get_ptr(), buffer.get_ptr() + got);
 		total += got;
 	}
+
+	out.set_size(data.size());
+	if (!data.empty()) {
+		memcpy(out.get_ptr(), data.data(), data.size());
+	}
+}
+
+void read_all(file::ptr stream, mem_block_container &out, abort_callback &abort,
+			  size_t chunk_size, size_t max_bytes) {
+	read_all(stream, out, abort, chunk_size, max_bytes, k_expected_size_unknown);
 }
 
 void read_all(const response &http_response, mem_block_container &out,
 			  abort_callback &abort, size_t chunk_size, size_t max_bytes) {
-	read_all(http_response.stream, out, abort, chunk_size, max_bytes);
+	read_all(http_response.stream, out, abort, chunk_size, max_bytes,
+			 get_expected_response_size(http_response, max_bytes));
 }
 
 pfc::string8 read_text(file::ptr stream, abort_callback &abort,
