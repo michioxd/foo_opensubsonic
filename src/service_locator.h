@@ -16,10 +16,12 @@ namespace subsonic {
 // - Service Locator is acceptable pattern for plugin architectures
 //
 // Ownership Contract:
-// - initialize() creates shared_ptr<ServiceBundle> and atomically replaces old one
-// - Repeated initialize() is safe - old bundle remains valid until all refs dropped
-// - shutdown() atomically resets shared_ptr - accessors holding refs remain valid
-// - Accessor methods return references backed by thread-local shared_ptr copies
+// - initialize() receives shared ownership of the service objects
+// - ServiceBundle stores shared_ptrs to the services, not borrowed raw pointers
+// - Repeated initialize() is safe - old bundle and services remain valid until
+//   all shared_ptr snapshots are dropped
+// - shutdown() atomically resets the active bundle first; service objects are
+//   destroyed only after all remaining shared_ptr copies are released
 //
 // Thread-Safety Guarantees:
 // - All operations are lock-free and wait-free
@@ -47,15 +49,16 @@ class service_locator {
 	// will see the new bundle.
 	//
 	// Thread-safe: Uses atomic store with release semantics
-	static void initialize(IHttpClient *http_client,
-						   IMetadataRepository *metadata_repo) noexcept;
+	static void
+	initialize(std::shared_ptr<IHttpClient> http_client,
+			   std::shared_ptr<IMetadataRepository> metadata_repo) noexcept;
 
 	// Shutdown service locator
 	// Called during plugin shutdown
 	//
-	// Safety: Atomically resets shared_ptr. Threads currently holding
-	// references (via http_client/metadata_repository) will keep their
-	// bundle alive until they release it. No use-after-free possible.
+	// Safety: Atomically resets the active shared_ptr bundle before component
+	// owned shared_ptrs are reset. Threads holding service shared_ptr snapshots
+	// keep the old services alive until those snapshots are released.
 	//
 	// Thread-safe: Uses atomic store with release semantics
 	static void shutdown() noexcept;
@@ -64,13 +67,31 @@ class service_locator {
 	// Returns: Reference to registered HTTP client
 	// Throws: std::logic_error if not initialized
 	// Thread-safe: Uses atomic load with acquire semantics
+	// Lifetime: Safe for short scoped use only. Do not store the returned
+	// reference long-term; use http_client_ptr() when retaining the service.
 	[[nodiscard]] static IHttpClient &http_client();
+
+	// Get HTTP client shared_ptr snapshot
+	// Returns: Shared ownership of registered HTTP client
+	// Throws: std::logic_error if not initialized
+	// Thread-safe: Uses atomic load with acquire semantics
+	[[nodiscard]] static std::shared_ptr<IHttpClient> http_client_ptr();
 
 	// Get metadata repository instance
 	// Returns: Reference to registered metadata repository
 	// Throws: std::logic_error if not initialized
 	// Thread-safe: Uses atomic load with acquire semantics
+	// Lifetime: Safe for short scoped use only. Do not store the returned
+	// reference long-term; use metadata_repository_ptr() when retaining the
+	// service.
 	[[nodiscard]] static IMetadataRepository &metadata_repository();
+
+	// Get metadata repository shared_ptr snapshot
+	// Returns: Shared ownership of registered metadata repository
+	// Throws: std::logic_error if not initialized
+	// Thread-safe: Uses atomic load with acquire semantics
+	[[nodiscard]] static std::shared_ptr<IMetadataRepository>
+	metadata_repository_ptr();
 
 	// Check if services are initialized
 	// Thread-safe: Uses atomic load with acquire semantics
@@ -81,21 +102,26 @@ class service_locator {
 	~service_locator() = delete;
 
 	// Immutable service bundle for atomic snapshot consistency
-	// Stored in shared_ptr for safe lifetime management:
-	// - Accessors copy shared_ptr (ref count++)
-	// - shutdown() resets atomic, but copies remain valid
-	// - No use-after-free or manual delete needed
+	// Stored in shared_ptr for safe lifetime management of both the bundle and
+	// service objects:
+	// - Atomic loads copy the bundle shared_ptr (ref count++)
+	// - Bundle owns service shared_ptrs, so services remain alive with
+	// snapshots
+	// - shutdown() resets the active bundle, but outstanding copies remain
+	// valid
 	struct ServiceBundle {
-		IHttpClient *http;
-		IMetadataRepository *metadata;
+		std::shared_ptr<IHttpClient> http;
+		std::shared_ptr<IMetadataRepository> metadata;
 
-		ServiceBundle(IHttpClient *h, IMetadataRepository *m) noexcept
-			: http(h), metadata(m) {}
+		ServiceBundle(std::shared_ptr<IHttpClient> h,
+					  std::shared_ptr<IMetadataRepository> m) noexcept
+			: http(std::move(h)), metadata(std::move(m)) {}
 	};
 
-	// Atomic shared_ptr ensures both snapshot consistency AND safe lifetime
+	// Atomic shared_ptr ensures snapshot consistency and safe bundle lifetime
 	// - Atomic load creates new shared_ptr copy (thread-safe ref count)
-	// - Outstanding copies keep bundle alive during shutdown
+	// - Outstanding copies keep bundle and service shared_ptrs alive during
+	// shutdown
 	// - Eliminates TOCTOU race between http_client/metadata_repository
 	static std::atomic<std::shared_ptr<ServiceBundle>> s_services;
 };

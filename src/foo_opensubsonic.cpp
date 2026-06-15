@@ -21,14 +21,13 @@ class initquit_foo_opensubsonic : public initquit {
 	void on_init() override {
 		auto credentials = subsonic::config::load_server_credentials();
 
-		m_http_client = std::make_unique<subsonic::foobar_http_client>(
+		m_http_client = std::make_shared<subsonic::foobar_http_client>(
 			std::move(credentials));
 
 		m_metadata_repo =
-			std::make_unique<subsonic::foobar_metadata_repository>();
+			std::make_shared<subsonic::foobar_metadata_repository>();
 
-		subsonic::service_locator::initialize(m_http_client.get(),
-											  m_metadata_repo.get());
+		subsonic::service_locator::initialize(m_http_client, m_metadata_repo);
 	}
 
 	void on_quit() override {
@@ -39,8 +38,8 @@ class initquit_foo_opensubsonic : public initquit {
 	}
 
   private:
-	std::unique_ptr<subsonic::foobar_http_client> m_http_client;
-	std::unique_ptr<subsonic::foobar_metadata_repository> m_metadata_repo;
+	std::shared_ptr<subsonic::foobar_http_client> m_http_client;
+	std::shared_ptr<subsonic::foobar_metadata_repository> m_metadata_repo;
 };
 
 static initquit_factory_t<initquit_foo_opensubsonic>
