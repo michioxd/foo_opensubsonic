@@ -55,7 +55,7 @@ size_t get_expected_response_size(const subsonic::http::response &http_response,
 	pfc::string8 content_length;
 	if (!http_response.reply.is_valid() ||
 		!http_response.reply->get_http_header("content-length",
-											content_length)) {
+											  content_length)) {
 		return k_expected_size_unknown;
 	}
 
@@ -189,7 +189,8 @@ static void read_all(file::ptr stream, mem_block_container &out,
 
 void read_all(file::ptr stream, mem_block_container &out, abort_callback &abort,
 			  size_t chunk_size, size_t max_bytes) {
-	read_all(stream, out, abort, chunk_size, max_bytes, k_expected_size_unknown);
+	read_all(stream, out, abort, chunk_size, max_bytes,
+			 k_expected_size_unknown);
 }
 
 void read_all(const response &http_response, mem_block_container &out,

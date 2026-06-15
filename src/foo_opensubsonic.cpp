@@ -1,5 +1,6 @@
 #include "stdafx.h"
 
+#include "artwork.h"
 #include "component_info.h"
 #include "config.h"
 #include "foobar_metadata_repository.h"
@@ -31,6 +32,7 @@ class initquit_foo_opensubsonic : public initquit {
 	}
 
 	void on_quit() override {
+		subsonic::artwork::shutdown();
 		subsonic::service_locator::shutdown();
 
 		m_metadata_repo.reset();

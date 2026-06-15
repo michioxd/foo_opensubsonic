@@ -24,7 +24,8 @@ static const GUID guid_subsonic_album_art_extractor = {
 	{0xa0, 0xd4, 0x66, 0x6c, 0x94, 0x39, 0x5d, 0xa1}};
 
 constexpr size_t k_max_artwork_bytes = 32 * 1024 * 1024;
-constexpr std::uint64_t k_cache_touch_interval_ms = 5ull * 60ull * 1000ull; // 5 minutes
+constexpr std::uint64_t k_cache_touch_interval_ms =
+	5ull * 60ull * 1000ull; // 5 minutes
 
 // LRU cache settings for decoded artwork (in-memory)
 constexpr size_t k_lru_cache_max_entries = 100; // Cache up to 100 artworks
@@ -637,6 +638,22 @@ static service_factory_single_t<subsonic_album_art_fallback_impl>
 } // namespace
 
 namespace subsonic::artwork {
+void shutdown() noexcept {
+	try {
+		{
+			std::unique_lock lock(g_artwork_cache_mutex);
+			g_artwork_cache.clear();
+		}
+
+		{
+			std::unique_lock lock(g_artwork_data_cache_mutex);
+			g_artwork_data_cache.clear();
+			g_artwork_data_cache_total_bytes = 0;
+		}
+	} catch (...) {
+	}
+}
+
 bool is_supported_path(const char *path) noexcept {
 	pfc::string8 dummy;
 	return extract_track_id_from_path(path, dummy);
