@@ -57,6 +57,8 @@ The component is usable for day-to-day playback and library syncing, but it is s
   - `WTL` (from the WTL v10.01 release)
   - `nlohmann/json.hpp` (from the nlohmann/json v3.12.0 release)
 
+  [More details about the `lib` folder can be found in this comment](https://github.com/michioxd/foo_opensubsonic/issues/6#issuecomment-4371043632)
+
 ### Building
 
 1. Open `foo_opensubsonic.sln` in Visual Studio.
