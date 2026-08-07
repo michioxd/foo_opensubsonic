@@ -12,42 +12,46 @@
 
 namespace {
 
-constexpr const char *k_now_playing_scope = "now-playing";
+constexpr const char *k_report_scope = "report-playback";
+constexpr const char *k_scrobble_scope = "scrobble";
+constexpr const char *k_report_endpoint = "reportPlayback.view";
 constexpr const char *k_scrobble_endpoint = "scrobble.view";
-constexpr std::uint64_t k_now_playing_resume_dedupe_ms = 15 * 1000;
 
-std::mutex g_playback_state_mutex;
-pfc::string8 g_last_now_playing_track_id;
-std::uint64_t g_last_now_playing_unix_ms = 0;
+std::mutex g_current_track_mutex;
+pfc::string8 g_current_track_id;
 
-[[nodiscard]] bool should_send_now_playing(const char *track_id, bool force) {
-	if (track_id == nullptr || *track_id == '\0') {
-		return false;
+void set_current_track_id(const char *track_id) {
+	std::scoped_lock lock(g_current_track_mutex);
+	if (track_id != nullptr) {
+		g_current_track_id = track_id;
+	} else {
+		g_current_track_id.reset();
 	}
-
-	std::scoped_lock lock(g_playback_state_mutex);
-	const auto now_ms = subsonic::time_utils::current_unix_time_ms();
-	const bool same_track = g_last_now_playing_track_id == track_id;
-	if (!force && same_track &&
-		(now_ms - g_last_now_playing_unix_ms) <
-			k_now_playing_resume_dedupe_ms) {
-		return false;
-	}
-
-	g_last_now_playing_track_id = track_id;
-	g_last_now_playing_unix_ms = now_ms;
-	return true;
 }
 
-void clear_now_playing_state() {
-	std::scoped_lock lock(g_playback_state_mutex);
-	g_last_now_playing_track_id.reset();
-	g_last_now_playing_unix_ms = 0;
+pfc::string8 get_current_track_id() {
+	std::scoped_lock lock(g_current_track_mutex);
+	return g_current_track_id;
 }
 
-void send_playback_ping_async(const char *track_id, bool submission,
-							  const char *scope,
-							  std::int64_t position_ms = -1) {
+enum class playback_state { starting, playing, paused, stopped };
+
+constexpr const char *state_to_str(playback_state state) noexcept {
+	switch (state) {
+	case playback_state::starting:
+		return "starting";
+	case playback_state::playing:
+		return "playing";
+	case playback_state::paused:
+		return "paused";
+	case playback_state::stopped:
+		return "stopped";
+	}
+	return "stopped";
+}
+
+void report_playback_async(const char *track_id, playback_state state,
+						   std::int64_t position_ms) {
 	if (track_id == nullptr || *track_id == '\0') {
 		return;
 	}
@@ -58,68 +62,44 @@ void send_playback_ping_async(const char *track_id, bool submission,
 	}
 
 	const pfc::string8 track_id_copy = track_id;
-	const pfc::string8 scope_copy =
-		scope != nullptr ? scope : k_now_playing_scope;
+	const pfc::string8 state_str = state_to_str(state);
 
-	fb2k::splitTask([credentials, track_id_copy, submission, scope_copy,
-					 position_ms] {
+	fb2k::splitTask([credentials, track_id_copy, state_str, position_ms] {
 		try {
-			std::vector<subsonic::query_param> params = {
-				subsonic::query_param("id", track_id_copy.c_str()),
-				subsonic::query_param("submission",
-									  submission ? "true" : "false")};
-
-			if (!submission && position_ms >= 0) {
-				params.push_back(subsonic::query_param(
-					"time",
-					(PFC_string_formatter() << (t_int64)position_ms).c_str()));
-			}
-
 			auto response = subsonic::http::open_api(
-				credentials, k_scrobble_endpoint, fb2k::noAbort, params);
+				credentials, k_report_endpoint, fb2k::noAbort,
+				{subsonic::query_param("mediaId", track_id_copy.c_str()),
+				 subsonic::query_param("mediaType", "song"),
+				 subsonic::query_param(
+					 "positionMs",
+					 (PFC_string_formatter() << (t_int64)position_ms).c_str()),
+				 subsonic::query_param("state", state_str.c_str()),
+				 subsonic::query_param("ignoreScrobble", "true")});
 
 			if (!subsonic::http::status_is_success(response)) {
 				subsonic::log_warning(
-					scope_copy,
+					k_report_scope,
 					(PFC_string_formatter()
-					 << "failed to send playback ping for id=" << track_id_copy
-					 << " submission=" << (submission ? "true" : "false")
+					 << "failed to report playback for id=" << track_id_copy
+					 << " state=" << state_str
 					 << " status=" << response.status_text)
 						.c_str());
 				return;
 			}
 
-			subsonic::log_info(scope_copy, (PFC_string_formatter()
-											<< "sent playback ping for id="
-											<< track_id_copy << " submission="
-											<< (submission ? "true" : "false"))
-											   .c_str());
+			subsonic::log_info(
+				k_report_scope,
+				(PFC_string_formatter()
+				 << "reported playback for id=" << track_id_copy
+				 << " state=" << state_str << " positionMs="
+				 << (t_int64)position_ms)
+					.c_str());
 		} catch (const std::exception &e) {
-			subsonic::log_exception(scope_copy, e);
+			subsonic::log_exception(k_report_scope, e);
 		} catch (...) {
-			subsonic::log_error(scope_copy, "failed to send playback ping");
+			subsonic::log_error(k_report_scope, "failed to report playback");
 		}
 	});
-}
-
-void notify_now_playing_async(const char *path, bool force) {
-	pfc::string8 track_id;
-	if (!subsonic::extract_track_id_from_path(path, track_id) ||
-		track_id.is_empty() || !should_send_now_playing(track_id, force)) {
-		return;
-	}
-
-	send_playback_ping_async(track_id, false, k_now_playing_scope);
-}
-
-void notify_position_async(const char *path, std::int64_t position_ms) {
-	pfc::string8 track_id;
-	if (!subsonic::extract_track_id_from_path(path, track_id) ||
-		track_id.is_empty()) {
-		return;
-	}
-
-	send_playback_ping_async(track_id, false, k_now_playing_scope, position_ms);
 }
 
 void submit_scrobble_async(const char *path) {
@@ -129,7 +109,53 @@ void submit_scrobble_async(const char *path) {
 		return;
 	}
 
-	send_playback_ping_async(track_id, true, "scrobble");
+	const auto credentials = subsonic::config::load_server_credentials();
+	if (!credentials.is_configured()) {
+		return;
+	}
+
+	const pfc::string8 track_id_copy = track_id;
+
+	fb2k::splitTask([credentials, track_id_copy] {
+		try {
+			auto response = subsonic::http::open_api(
+				credentials, k_scrobble_endpoint, fb2k::noAbort,
+				{subsonic::query_param("id", track_id_copy.c_str()),
+				 subsonic::query_param("submission", "true")});
+
+			if (!subsonic::http::status_is_success(response)) {
+				subsonic::log_warning(
+					k_scrobble_scope,
+					(PFC_string_formatter()
+					 << "failed to scrobble id=" << track_id_copy
+					 << " status=" << response.status_text)
+						.c_str());
+				return;
+			}
+
+			subsonic::log_info(
+				k_scrobble_scope,
+				(PFC_string_formatter() << "scrobbled id=" << track_id_copy)
+					.c_str());
+		} catch (const std::exception &e) {
+			subsonic::log_exception(k_scrobble_scope, e);
+		} catch (...) {
+			subsonic::log_error(k_scrobble_scope, "failed to scrobble");
+		}
+	});
+}
+
+[[nodiscard]] bool extract_track_id_from_handle(const metadb_handle_ptr &track,
+												 pfc::string8 &out_id) {
+	if (!track.is_valid()) {
+		return false;
+	}
+	const char *path = track->get_path();
+	if (path == nullptr || !subsonic::is_subsonic_path(path)) {
+		return false;
+	}
+	return subsonic::extract_track_id_from_path(path, out_id) &&
+		   !out_id.is_empty();
 }
 
 class opensubsonic_playback_callback : public play_callback_static {
@@ -140,7 +166,14 @@ class opensubsonic_playback_callback : public play_callback_static {
 	}
 
 	void on_playback_new_track(metadb_handle_ptr track) override {
-		notify_for_track(track, true);
+		pfc::string8 track_id;
+		if (!extract_track_id_from_handle(track, track_id)) {
+			return;
+		}
+
+		set_current_track_id(track_id.c_str());
+		report_playback_async(track_id, playback_state::starting, 0);
+		report_playback_async(track_id, playback_state::playing, 0);
 	}
 
 	void on_playback_pause(bool state) override {
@@ -149,59 +182,54 @@ class opensubsonic_playback_callback : public play_callback_static {
 			return;
 		}
 
-		if (!state) {
-			notify_for_track(now_playing, false);
-			return;
-		}
-
-		const char *path = now_playing->get_path();
-		if (path == nullptr || !subsonic::is_subsonic_path(path)) {
+		pfc::string8 track_id;
+		if (!extract_track_id_from_handle(now_playing, track_id)) {
 			return;
 		}
 
 		const auto position_ms = static_cast<std::int64_t>(
 			playback_control::get()->playback_get_position() * 1000.0);
-		notify_position_async(path, position_ms);
+
+		report_playback_async(
+			track_id, state ? playback_state::paused : playback_state::playing,
+			position_ms);
 	}
 
-	void on_playback_starting(play_control::t_track_command, bool) override {}
-	void on_playback_stop(play_control::t_stop_reason) override {
-		clear_now_playing_state();
-	}
 	void on_playback_seek(double time_secs) override {
 		metadb_handle_ptr now_playing;
 		if (!playback_control::get()->get_now_playing(now_playing)) {
 			return;
 		}
 
-		const char *path = now_playing->get_path();
-		if (path == nullptr || !subsonic::is_subsonic_path(path)) {
+		pfc::string8 track_id;
+		if (!extract_track_id_from_handle(now_playing, track_id)) {
 			return;
 		}
 
 		const auto position_ms =
 			static_cast<std::int64_t>(time_secs * 1000.0);
-		notify_position_async(path, position_ms);
+		report_playback_async(track_id, playback_state::playing, position_ms);
 	}
+
+	void on_playback_starting(play_control::t_track_command, bool) override {}
+
+	void on_playback_stop(play_control::t_stop_reason) override {
+		const pfc::string8 track_id = get_current_track_id();
+		if (track_id.is_empty()) {
+			return;
+		}
+
+		const auto position_ms = static_cast<std::int64_t>(
+			playback_control::get()->playback_get_position() * 1000.0);
+		report_playback_async(track_id, playback_state::stopped, position_ms);
+		set_current_track_id(nullptr);
+	}
+
 	void on_playback_edited(metadb_handle_ptr) override {}
 	void on_playback_dynamic_info(const file_info &) override {}
 	void on_playback_dynamic_info_track(const file_info &) override {}
 	void on_playback_time(double) override {}
 	void on_volume_change(float) override {}
-
-  private:
-	static void notify_for_track(const metadb_handle_ptr &track, bool force) {
-		if (!track.is_valid()) {
-			return;
-		}
-
-		const char *path = track->get_path();
-		if (path == nullptr || !subsonic::is_subsonic_path(path)) {
-			return;
-		}
-
-		notify_now_playing_async(path, force);
-	}
 };
 
 class opensubsonic_playback_statistics_collector
