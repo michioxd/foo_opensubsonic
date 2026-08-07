@@ -46,7 +46,8 @@ void clear_now_playing_state() {
 }
 
 void send_playback_ping_async(const char *track_id, bool submission,
-							  const char *scope) {
+							  const char *scope,
+							  std::int64_t position_ms = -1) {
 	if (track_id == nullptr || *track_id == '\0') {
 		return;
 	}
@@ -60,13 +61,22 @@ void send_playback_ping_async(const char *track_id, bool submission,
 	const pfc::string8 scope_copy =
 		scope != nullptr ? scope : k_now_playing_scope;
 
-	fb2k::splitTask([credentials, track_id_copy, submission, scope_copy] {
+	fb2k::splitTask([credentials, track_id_copy, submission, scope_copy,
+					 position_ms] {
 		try {
+			std::vector<subsonic::query_param> params = {
+				subsonic::query_param("id", track_id_copy.c_str()),
+				subsonic::query_param("submission",
+									  submission ? "true" : "false")};
+
+			if (!submission && position_ms >= 0) {
+				params.push_back(subsonic::query_param(
+					"time",
+					(PFC_string_formatter() << (t_int64)position_ms).c_str()));
+			}
+
 			auto response = subsonic::http::open_api(
-				credentials, k_scrobble_endpoint, fb2k::noAbort,
-				{subsonic::query_param("id", track_id_copy.c_str()),
-				 subsonic::query_param("submission",
-									   submission ? "true" : "false")});
+				credentials, k_scrobble_endpoint, fb2k::noAbort, params);
 
 			if (!subsonic::http::status_is_success(response)) {
 				subsonic::log_warning(
@@ -102,6 +112,16 @@ void notify_now_playing_async(const char *path, bool force) {
 	send_playback_ping_async(track_id, false, k_now_playing_scope);
 }
 
+void notify_position_async(const char *path, std::int64_t position_ms) {
+	pfc::string8 track_id;
+	if (!subsonic::extract_track_id_from_path(path, track_id) ||
+		track_id.is_empty()) {
+		return;
+	}
+
+	send_playback_ping_async(track_id, false, k_now_playing_scope, position_ms);
+}
+
 void submit_scrobble_async(const char *path) {
 	pfc::string8 track_id;
 	if (!subsonic::extract_track_id_from_path(path, track_id) ||
@@ -115,7 +135,8 @@ void submit_scrobble_async(const char *path) {
 class opensubsonic_playback_callback : public play_callback_static {
   public:
 	unsigned get_flags() override {
-		return flag_on_playback_new_track | flag_on_playback_pause;
+		return flag_on_playback_new_track | flag_on_playback_pause |
+			   flag_on_playback_seek | flag_on_playback_stop;
 	}
 
 	void on_playback_new_track(metadb_handle_ptr track) override {
@@ -123,23 +144,45 @@ class opensubsonic_playback_callback : public play_callback_static {
 	}
 
 	void on_playback_pause(bool state) override {
-		if (state) {
-			return;
-		}
-
 		metadb_handle_ptr now_playing;
 		if (!playback_control::get()->get_now_playing(now_playing)) {
 			return;
 		}
 
-		notify_for_track(now_playing, false);
+		if (!state) {
+			notify_for_track(now_playing, false);
+			return;
+		}
+
+		const char *path = now_playing->get_path();
+		if (path == nullptr || !subsonic::is_subsonic_path(path)) {
+			return;
+		}
+
+		const auto position_ms = static_cast<std::int64_t>(
+			playback_control::get()->playback_get_position() * 1000.0);
+		notify_position_async(path, position_ms);
 	}
 
 	void on_playback_starting(play_control::t_track_command, bool) override {}
 	void on_playback_stop(play_control::t_stop_reason) override {
 		clear_now_playing_state();
 	}
-	void on_playback_seek(double) override {}
+	void on_playback_seek(double time_secs) override {
+		metadb_handle_ptr now_playing;
+		if (!playback_control::get()->get_now_playing(now_playing)) {
+			return;
+		}
+
+		const char *path = now_playing->get_path();
+		if (path == nullptr || !subsonic::is_subsonic_path(path)) {
+			return;
+		}
+
+		const auto position_ms =
+			static_cast<std::int64_t>(time_secs * 1000.0);
+		notify_position_async(path, position_ms);
+	}
 	void on_playback_edited(metadb_handle_ptr) override {}
 	void on_playback_dynamic_info(const file_info &) override {}
 	void on_playback_dynamic_info_track(const file_info &) override {}
