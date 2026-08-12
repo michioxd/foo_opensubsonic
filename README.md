@@ -10,7 +10,7 @@
 
 - Connect to OpenSubsonic-compatible servers such as Navidrome
 - Stream tracks directly in foobar2000 through `subsonic://` paths
-- Sync remote library metadata into a local foobar2000 playlist
+- Sync remote library metadata into ~~a local foobar2000 playlist~~ *(__todo__: refactor to add into fb2k media library instead a playlist)*
 - Import and sync remote playlists
 - Load and cache album artwork with fallback support for streamed items
 
