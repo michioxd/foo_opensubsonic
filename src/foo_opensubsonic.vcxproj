@@ -268,7 +268,10 @@
     <ClInclude Include="artwork.h" />
     <ClInclude Include="cache.h" />
     <ClInclude Include="config.h" />
+    <ClInclude Include="folder_actions.h" />
+    <ClInclude Include="folder_types.h" />
     <ClInclude Include="foobar_metadata_repository.h" />
+    <ClInclude Include="http\folder_api.h" />
     <ClInclude Include="http\foobar_http_client.h" />
     <ClInclude Include="http\http.h" />
     <ClInclude Include="http\http_client_interface.h" />
@@ -282,6 +285,7 @@
     <ClInclude Include="stdafx.h" />
     <ClInclude Include="sync_types.h" />
     <ClInclude Include="types.h" />
+    <ClInclude Include="ui\folder_view_panel.h" />
     <ClInclude Include="utils\crypto_util.h" />
     <ClInclude Include="utils\string_util.h" />
     <ClInclude Include="utils\subsonic_json_parser.h" />
@@ -296,8 +300,13 @@
     <ClCompile Include="artwork.cpp" />
     <ClCompile Include="cache.cpp" />
     <ClCompile Include="config.cpp" />
+    <ClCompile Include="folder_actions.cpp" />
+    <ClCompile Include="folder_types.cpp" />
     <ClCompile Include="foobar_metadata_repository.cpp" />
     <ClCompile Include="foo_opensubsonic.cpp" />
+    <ClCompile Include="http\folder_api.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
     <ClCompile Include="http\foobar_http_client.cpp">
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
     </ClCompile>
@@ -320,6 +329,7 @@
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|ARM64EC'">Create</PrecompiledHeader>
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|ARM64'">Create</PrecompiledHeader>
     </ClCompile>
+    <ClCompile Include="ui\folder_view_panel.cpp" />
     <ClCompile Include="utils\crypto_util.cpp">
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
     </ClCompile>
