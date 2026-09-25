@@ -9,20 +9,23 @@
 
 namespace subsonic::ui {
 
-static const GUID guid_folder_view_panel = { 
+static constexpr GUID guid_folder_view_panel = { 
 	0x519890a9, 0xb800, 0x4f36, 
 	{ 0xa6, 0x5c, 0x7c, 0xc1, 0x1f, 0x8a, 0x1d, 0x6e } 
 };
 
-enum menu_commands : UINT_PTR {
+namespace
+{
+enum menu_commands : std::uint16_t {
 	ID_MENU_PLAY_FOLDER = 10001,
 	ID_MENU_REFRESH_FOLDER,
 	ID_MENU_PLAY_TRACK,
 	ID_MENU_ADD_TRACK
 };
+}
 
 folder_view_panel::folder_view_panel(ui_element_config::ptr cfg, ui_element_instance_callback::ptr callback)
-	: m_bMsgHandled(0), m_config(cfg), m_callback(callback),
+	: m_bMsgHandled(0), m_config(std::move(cfg)), m_callback(std::move(callback)),
 	  m_is_alive(std::make_shared<std::atomic<bool>>(true)),
 	  m_abort(std::make_shared<abort_callback_impl>()) {
 }
@@ -34,7 +37,7 @@ folder_view_panel::~folder_view_panel() {
 }
 
 void folder_view_panel::initialize_window(HWND parent) {
-	WIN32_OP(Create(parent) != NULL);
+	WIN32_OP(Create(parent) != NULL)
 }
 
 HWND folder_view_panel::get_wnd() {
@@ -85,7 +88,7 @@ void folder_view_panel::update_colors() {
 int folder_view_panel::OnCreate(LPCREATESTRUCT lpCreateStruct) {
 	m_dark.AddDialogWithControls(*this);
 
-	m_tree.Create(m_hWnd, rcDefault, NULL, 
+	m_tree.Create(m_hWnd, rcDefault, nullptr, 
 				  WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | WS_CLIPCHILDREN | 
 				  TVS_HASBUTTONS | TVS_HASLINES | TVS_LINESATROOT | TVS_SHOWSELALWAYS, 
 				  WS_EX_CLIENTEDGE);
@@ -102,8 +105,8 @@ int folder_view_panel::OnCreate(LPCREATESTRUCT lpCreateStruct) {
 }
 
 void folder_view_panel::OnSize(UINT nType, CSize size) {
-	if (m_tree.m_hWnd != NULL) {
-		m_tree.SetWindowPos(NULL, 0, 0, size.cx, size.cy, SWP_NOZORDER | SWP_NOACTIVATE);
+	if (m_tree.m_hWnd != nullptr) {
+		m_tree.SetWindowPos(nullptr, 0, 0, size.cx, size.cy, SWP_NOZORDER | SWP_NOACTIVATE);
 	}
 	SetMsgHandled(FALSE);
 }
@@ -205,6 +208,10 @@ void folder_view_panel::expand_folder_node(HTREEITEM hItem, tree_node_data *data
 		return;
 	}
 	
+	if (play_when_loaded) {
+		data->pending_playback = true;
+	}
+	
 	if (m_fetching_nodes.contains(data->id.c_str())) {
 		return; 
 	}
@@ -218,14 +225,23 @@ void folder_view_panel::expand_folder_node(HTREEITEM hItem, tree_node_data *data
 	bool is_root = data->is_root_music_folder;
 	auto abort_sp = m_abort;
 	
-	fb2k::splitTask([alive, pThis, hItem, node_id, abort_sp, is_root, play_when_loaded] {
+	const uint64_t current_generation = ++data->fetch_generation;
+	
+	fb2k::splitTask([alive, pThis, hItem, node_id, abort_sp, current_generation, is_root] {
 		try {
 			if (!*alive) return;
 
 			auto credentials = subsonic::config::load_server_credentials();
 			if (!credentials.is_configured()) {
-				fb2k::inMainThread([alive, pThis, node_id] {
+				fb2k::inMainThread([alive, pThis, hItem, node_id, current_generation] {
 					if (!*alive) return;
+
+					const tree_node_data* active_data = nullptr;
+					if (pThis->m_node_store.contains(hItem)) {
+						active_data = pThis->m_node_store[hItem].get();
+					}
+					if (!active_data || active_data->id != node_id || active_data->fetch_generation != current_generation) return;
+					
 					pThis->m_fetching_nodes.erase(node_id.c_str());
 				});
 				return;
@@ -234,20 +250,26 @@ void folder_view_panel::expand_folder_node(HTREEITEM hItem, tree_node_data *data
 			subsonic::foobar_http_client standalone_client(credentials);
 			auto dir_result = folder_api::fetch_directory(standalone_client, node_id.c_str(), is_root, *abort_sp);
 			
-			
-			fb2k::inMainThread([alive, pThis, hItem, node_id, dir_result = std::move(dir_result), play_when_loaded]() mutable {
+			fb2k::inMainThread([alive, pThis, hItem, node_id, current_generation, dir_result = std::move(dir_result)]() mutable {
 				if (!*alive) return;
-				pThis->m_fetching_nodes.erase(node_id.c_str());
 				
 				tree_node_data* active_data = nullptr;
-				if (pThis->m_node_store.count(hItem)) {
+				if (pThis->m_node_store.contains(hItem)) {
 					active_data = pThis->m_node_store[hItem].get();
 				}
-				if (!active_data || active_data->id != node_id) return;
+				if (!active_data || active_data->id != node_id) {
+					pThis->m_fetching_nodes.erase(node_id.c_str());
+					return;
+				}
+				
+				if (active_data->fetch_generation != current_generation) {
+					return;
+				}
+				pThis->m_fetching_nodes.erase(node_id.c_str());
 				
 				HTREEITEM hChild = pThis->m_tree.GetChildItem(hItem);
-				while (hChild != NULL) {
-					HTREEITEM hNext = pThis->m_tree.GetNextSiblingItem(hChild);
+				while (hChild != nullptr) {
+					const HTREEITEM hNext = pThis->m_tree.GetNextSiblingItem(hChild);
 					pThis->m_tree.DeleteItem(hChild);
 					hChild = hNext;
 				}
@@ -290,17 +312,25 @@ void folder_view_panel::expand_folder_node(HTREEITEM hItem, tree_node_data *data
 				active_data->children_loaded = true;
 				pThis->m_tree.Expand(hItem, TVE_EXPAND);
 				
-				if (play_when_loaded && !active_data->folder_tracks.empty()) {
+				if (active_data->pending_playback && !active_data->folder_tracks.empty()) {
+					active_data->pending_playback = false;
 					folder_actions::play_folder_as_playlist(active_data->name.c_str(), active_data->folder_tracks);
 				}
 			});
 		} catch (const std::exception &e) {
-			fb2k::inMainThread([alive, pThis, hItem, node_id, err = pfc::string8(e.what())] {
+			fb2k::inMainThread([alive, pThis, hItem, node_id, current_generation, err = pfc::string8(e.what())] {
 				if (!*alive) return;
+
+				const tree_node_data* active_data = nullptr;
+				if (pThis->m_node_store.contains(hItem)) {
+					active_data = pThis->m_node_store[hItem].get();
+				}
+				if (!active_data || active_data->id != node_id || active_data->fetch_generation != current_generation) return;
+
 				pThis->m_fetching_nodes.erase(node_id.c_str());
 				
 				HTREEITEM hChild = pThis->m_tree.GetChildItem(hItem);
-				while (hChild != NULL) {
+				while (hChild != nullptr) {
 					HTREEITEM hNext = pThis->m_tree.GetNextSiblingItem(hChild);
 					pThis->m_tree.DeleteItem(hChild);
 					hChild = hNext;
@@ -357,7 +387,7 @@ LRESULT folder_view_panel::OnNotify(int idCtrl, LPNMHDR pnmh) {
 			}
 		} else if (pnmh->code == NM_DBLCLK) {
 			HTREEITEM hSel = m_tree.GetSelectedItem();
-			if (hSel != NULL) {
+			if (hSel != nullptr) {
 				auto *data = reinterpret_cast<tree_node_data *>(m_tree.GetItemData(hSel));
 				if (data != nullptr && data->is_track && data->track_meta.has_value()) {
 					folder_actions::play_or_enqueue_track(data->track_meta.value(), false);
@@ -379,7 +409,7 @@ void folder_view_panel::OnContextMenu(HWND hwnd, CPoint pt) {
 	if (hwnd == m_tree.m_hWnd || ::IsChild(m_tree.m_hWnd, hwnd)) {
 		HTREEITEM hSel = m_tree.GetSelectedItem();
 		tree_node_data *data = nullptr;
-		if (hSel != NULL) {
+		if (hSel != nullptr) {
 			data = reinterpret_cast<tree_node_data *>(m_tree.GetItemData(hSel));
 		}
 
@@ -406,9 +436,12 @@ void folder_view_panel::OnContextMenu(HWND hwnd, CPoint pt) {
 			if (data && !data->is_track) {
 				data->children_loaded = false;
 				data->folder_tracks.clear();
+				data->pending_playback = false;
+				
+				m_fetching_nodes.erase(data->id.c_str());
 				
 				HTREEITEM hChild = m_tree.GetChildItem(hSel);
-				while (hChild != NULL) {
+				while (hChild != nullptr) {
 					const HTREEITEM hNext = m_tree.GetNextSiblingItem(hChild);
 					m_tree.DeleteItem(hChild);
 					hChild = hNext;
@@ -429,5 +462,7 @@ void folder_view_panel::OnContextMenu(HWND hwnd, CPoint pt) {
 		}
 	}
 }
+
+static service_factory_single_t<folder_view_panel_impl> g_folder_view_panel_impl_factory;
 
 } // namespace subsonic::ui

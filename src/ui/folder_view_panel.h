@@ -31,6 +31,8 @@ struct tree_node_data {
 	bool is_track = false;
 	std::optional<cached_track_metadata> track_meta;
 	std::vector<cached_track_metadata> folder_tracks;
+	uint64_t fetch_generation = 0;
+	bool pending_playback = false;
 };
 
 class folder_view_panel : public ui_element_instance, public CWindowImpl<folder_view_panel> {
