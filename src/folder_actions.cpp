@@ -45,20 +45,22 @@ void play_folder_as_playlist(const char *folder_name, const std::vector<cached_t
 	if (pl_index == SIZE_MAX) {
 		pl_index = pm->create_playlist(playlist_name, SIZE_MAX, SIZE_MAX);
 	}
+	
+	if (pl_index == SIZE_MAX) {
+		return;
+	}
 
-	if (pl_index != SIZE_MAX) {
-		pm->playlist_clear(pl_index);
-		
-		if (handles.get_count() > 0) {
-			pm->playlist_add_items(pl_index, handles, pfc::bit_array_false());
-		}
-		
-		pm->set_active_playlist(pl_index);
-		pm->set_playing_playlist(pl_index);
-		
-		if (handles.get_count() > 0) {
-			pm->playlist_execute_default_action(pl_index, 0);
-		}
+	pm->playlist_clear(pl_index);
+	
+	if (handles.get_count() > 0) {
+		pm->playlist_add_items(pl_index, handles, pfc::bit_array_false());
+	}
+	
+	pm->set_active_playlist(pl_index);
+	pm->set_playing_playlist(pl_index);
+	
+	if (handles.get_count() > 0) {
+		pm->playlist_execute_default_action(pl_index, 0);
 	}
 }
 
@@ -82,6 +84,9 @@ void play_or_enqueue_track(const cached_track_metadata &track, bool enqueue_only
 	
 	if (pl_index == SIZE_MAX) {
 		pl_index = pm->create_playlist("OpenSubsonic", SIZE_MAX, SIZE_MAX);
+		if (pl_index == SIZE_MAX) {
+			return;
+		}
 		pm->set_active_playlist(pl_index);
 	}
 

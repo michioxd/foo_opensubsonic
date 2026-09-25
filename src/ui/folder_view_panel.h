@@ -4,6 +4,7 @@
 
 #include <SDK/ui_element.h>
 #include <SDK/ui.h>
+#include <SDK/abort_callback.h>
 #include <helpers/atl-misc.h>
 #include <helpers/DarkMode.h>
 
@@ -69,7 +70,8 @@ private:
 
 	void update_colors();
 	void load_root_folders();
-	void expand_folder_node(HTREEITEM hItem, tree_node_data *data);
+	
+	void expand_folder_node(HTREEITEM hItem, tree_node_data *data, bool play_when_loaded = false);
 	void select_folder_node(HTREEITEM hItem, tree_node_data *data);
 
 	HTREEITEM insert_tree_node(HTREEITEM hParent, const char *clean_name, const char *id, bool is_root, bool has_children, bool is_track, std::optional<cached_track_metadata> track_meta, size_t initial_track_count = 0);
@@ -83,6 +85,8 @@ private:
 	ui_selection_holder::ptr m_selection_holder;
 
 	std::shared_ptr<std::atomic<bool>> m_is_alive;
+	
+	std::shared_ptr<abort_callback_impl> m_abort;
 	
 	std::unordered_map<HTREEITEM, std::unique_ptr<tree_node_data>> m_node_store;
 	std::unordered_set<std::string> m_fetching_nodes;

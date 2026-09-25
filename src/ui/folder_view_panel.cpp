@@ -1,4 +1,4 @@
-﻿#include "stdafx.h"
+﻿#include "../stdafx.h"
 #include "folder_view_panel.h"
 #include "../folder_actions.h"
 #include "../http/folder_api.h"
@@ -23,7 +23,8 @@ enum menu_commands : UINT_PTR {
 
 folder_view_panel::folder_view_panel(ui_element_config::ptr cfg, ui_element_instance_callback::ptr callback)
 	: m_bMsgHandled(0), m_config(cfg), m_callback(callback),
-	  m_is_alive(std::make_shared<std::atomic<bool>>(true)) {
+	  m_is_alive(std::make_shared<std::atomic<bool>>(true)),
+	  m_abort(std::make_shared<abort_callback_impl>()) {
 }
 
 folder_view_panel::~folder_view_panel() {
@@ -111,6 +112,9 @@ void folder_view_panel::OnDestroy() {
 	if (m_is_alive) {
 		*m_is_alive = false;
 	}
+	if (m_abort) {
+		m_abort->set();
+	}
 	m_selection_holder.release();
 	m_node_store.clear();
 	SetMsgHandled(FALSE);
@@ -152,8 +156,9 @@ void folder_view_panel::load_root_folders() {
 
 	auto alive = m_is_alive;
 	auto pThis = this; 
+	auto abort_sp = m_abort;
 
-	fb2k::splitTask([alive, pThis] {
+	fb2k::splitTask([alive, pThis, abort_sp] {
 		try {
 			if (!*alive) return;
 			
@@ -168,8 +173,7 @@ void folder_view_panel::load_root_folders() {
 			}
 
 			subsonic::foobar_http_client standalone_client(credentials);
-			abort_callback_dummy abort;
-			auto folders = folder_api::fetch_music_folders(standalone_client, abort);
+			auto folders = folder_api::fetch_music_folders(standalone_client, *abort_sp);
 
 			fb2k::inMainThread([alive, pThis, folders = std::move(folders)] {
 				if (!*alive) return;
@@ -196,12 +200,12 @@ void folder_view_panel::load_root_folders() {
 	});
 }
 
-void folder_view_panel::expand_folder_node(HTREEITEM hItem, tree_node_data *data) {
+void folder_view_panel::expand_folder_node(HTREEITEM hItem, tree_node_data *data, bool play_when_loaded) {
 	if (data == nullptr || data->children_loaded || data->id.is_empty()) {
 		return;
 	}
 	
-	if (m_fetching_nodes.count(data->id.c_str())) {
+	if (m_fetching_nodes.contains(data->id.c_str())) {
 		return; 
 	}
 	m_fetching_nodes.insert(data->id.c_str());
@@ -212,26 +216,26 @@ void folder_view_panel::expand_folder_node(HTREEITEM hItem, tree_node_data *data
 	auto pThis = this;
 	pfc::string8 node_id = data->id;
 	bool is_root = data->is_root_music_folder;
+	auto abort_sp = m_abort;
 	
-	fb2k::splitTask([alive, pThis, hItem, node_id, is_root] {
+	fb2k::splitTask([alive, pThis, hItem, node_id, abort_sp, is_root, play_when_loaded] {
 		try {
 			if (!*alive) return;
 
 			auto credentials = subsonic::config::load_server_credentials();
-			if (!credentials.is_configured()) return;
+			if (!credentials.is_configured()) {
+				fb2k::inMainThread([alive, pThis, node_id] {
+					if (!*alive) return;
+					pThis->m_fetching_nodes.erase(node_id.c_str());
+				});
+				return;
+			}
 
 			subsonic::foobar_http_client standalone_client(credentials);
-			abort_callback_dummy abort;
-			auto dir_result = folder_api::fetch_directory(standalone_client, node_id.c_str(), is_root, abort);
+			auto dir_result = folder_api::fetch_directory(standalone_client, node_id.c_str(), is_root, *abort_sp);
 			
-			std::vector<folder::directory_entry> valid_dirs;
-			for (auto& sub : dir_result.subdirectories) {
-				if (sub.has_song_count && sub.song_count == 0) continue;
-				valid_dirs.push_back(std::move(sub));
-			}
-			dir_result.subdirectories = std::move(valid_dirs);
 			
-			fb2k::inMainThread([alive, pThis, hItem, node_id, dir_result = std::move(dir_result)]() mutable {
+			fb2k::inMainThread([alive, pThis, hItem, node_id, dir_result = std::move(dir_result), play_when_loaded]() mutable {
 				if (!*alive) return;
 				pThis->m_fetching_nodes.erase(node_id.c_str());
 				
@@ -285,6 +289,10 @@ void folder_view_panel::expand_folder_node(HTREEITEM hItem, tree_node_data *data
 
 				active_data->children_loaded = true;
 				pThis->m_tree.Expand(hItem, TVE_EXPAND);
+				
+				if (play_when_loaded && !active_data->folder_tracks.empty()) {
+					folder_actions::play_folder_as_playlist(active_data->name.c_str(), active_data->folder_tracks);
+				}
 			});
 		} catch (const std::exception &e) {
 			fb2k::inMainThread([alive, pThis, hItem, node_id, err = pfc::string8(e.what())] {
@@ -392,11 +400,24 @@ void folder_view_panel::OnContextMenu(HWND hwnd, CPoint pt) {
 			if (data && !data->is_track && data->children_loaded) {
 				folder_actions::play_folder_as_playlist(data->name.c_str(), data->folder_tracks);
 			} else if (data && !data->is_track) {
-				expand_folder_node(hSel, data);
-				folder_actions::play_folder_as_playlist(data->name.c_str(), data->folder_tracks);
+				expand_folder_node(hSel, data, true);
 			}
 		} else if (cmd == ID_MENU_REFRESH_FOLDER) {
-			load_root_folders();
+			if (data && !data->is_track) {
+				data->children_loaded = false;
+				data->folder_tracks.clear();
+				
+				HTREEITEM hChild = m_tree.GetChildItem(hSel);
+				while (hChild != NULL) {
+					const HTREEITEM hNext = m_tree.GetNextSiblingItem(hChild);
+					m_tree.DeleteItem(hChild);
+					hChild = hNext;
+				}
+				
+				expand_folder_node(hSel, data);
+			} else if (!data) {
+				load_root_folders();
+			}
 		} else if (cmd == ID_MENU_PLAY_TRACK) {
 			if (data && data->is_track && data->track_meta.has_value()) {
 				folder_actions::play_or_enqueue_track(data->track_meta.value(), false);
@@ -408,7 +429,5 @@ void folder_view_panel::OnContextMenu(HWND hwnd, CPoint pt) {
 		}
 	}
 }
-
-static service_factory_single_t<folder_view_panel_impl> g_folder_view_panel_impl_factory;
 
 } // namespace subsonic::ui

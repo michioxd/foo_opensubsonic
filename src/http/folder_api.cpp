@@ -104,8 +104,7 @@ fetch_directory(IHttpClient &http_client, const char *dir_id, bool is_root_folde
 					entry.is_directory = true;
 					
 					extract_counts(node, entry);
-					if (entry.has_song_count && entry.song_count == 0) return;
-
+					
 					if (!entry.id.is_empty()) {
 						result.subdirectories.push_back(std::move(entry));
 					}
@@ -119,7 +118,6 @@ fetch_directory(IHttpClient &http_client, const char *dir_id, bool is_root_folde
 						entry.is_directory = true;
 
 						extract_counts(artist_node, entry);
-						if (entry.has_song_count && entry.song_count == 0) return;
 
 						if (!entry.id.is_empty()) {
 							result.subdirectories.push_back(std::move(entry));
@@ -162,8 +160,7 @@ fetch_directory(IHttpClient &http_client, const char *dir_id, bool is_root_folde
 					}
 
 					extract_counts(node, entry);
-					if (entry.has_song_count && entry.song_count == 0) return;
-
+					
 					if (!entry.id.is_empty()) {
 						result.subdirectories.push_back(std::move(entry));
 					}

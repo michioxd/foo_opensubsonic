@@ -329,7 +329,9 @@
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|ARM64EC'">Create</PrecompiledHeader>
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|ARM64'">Create</PrecompiledHeader>
     </ClCompile>
-    <ClCompile Include="ui\folder_view_panel.cpp" />
+    <ClCompile Include="ui\folder_view_panel.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
     <ClCompile Include="utils\crypto_util.cpp">
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
     </ClCompile>
