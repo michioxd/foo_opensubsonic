@@ -29,6 +29,8 @@
 #include <unordered_map>
 #include <unordered_set>
 
+#include "ui/folder_view_panel.h"
+
 namespace {
 
 using json = nlohmann::json;
